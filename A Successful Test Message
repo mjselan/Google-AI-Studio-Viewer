@@ -1,0 +1,123 @@
+{
+  "runSettings": {
+    "temperature": 1.0,
+    "model": "models/gemini-pro-latest",
+    "topP": 0.95,
+    "topK": 64,
+    "maxOutputTokens": 65536,
+    "safetySettings": [{
+      "category": "HARM_CATEGORY_HARASSMENT",
+      "threshold": "OFF"
+    }, {
+      "category": "HARM_CATEGORY_HATE_SPEECH",
+      "threshold": "OFF"
+    }, {
+      "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+      "threshold": "OFF"
+    }, {
+      "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+      "threshold": "OFF"
+    }],
+    "enableCodeExecution": false,
+    "enableSearchAsATool": true,
+    "enableBrowseAsATool": false,
+    "enableAutoFunctionResponse": false,
+    "thinkingBudget": -1,
+    "googleSearch": {
+    },
+    "outputResolution": "1K",
+    "thinkingLevel": "THINKING_HIGH",
+    "enableImageSearch": false,
+    "enableGoogleMaps": false,
+    "enableAgentThinkingSummariesControl": false,
+    "enableAgentVisualizationControl": false,
+    "enableAgentCollaborativePlanningControl": false,
+    "environmentMode": "new"
+  },
+  "systemInstruction": {
+  },
+  "chunkedPrompt": {
+    "chunks": [{
+      "text": "this is a test message, please respond with something.",
+      "role": "user",
+      "tokenCount": 11,
+      "createTime": "2026-05-31T17:25:11.934Z"
+    }, {
+      "text": "Test received! Everything is working perfectly. How can I help you today?",
+      "role": "model",
+      "finishReason": "STOP",
+      "tokenCount": 15,
+      "parts": [{
+        "text": "Test received"
+      }, {
+        "text": "! Everything is working perfectly. How can I help you today?"
+      }, {
+        "text": "",
+        "thoughtSignature": "EvgFCvUFAQw51sc5bD11l3A15m44jmvGZ7qd92Hd8DotRc0PgOMgvdPpzb8SI6tvZ00SIQShVHfusWqbEb2ZlS2tleNLFV1bozrgDOGVacJRV5KftOOZ42g0dJqDy7q/G2RAQCZVJy2DVBeNlaEx/KaLYephAf0a/eej6HGHcoqUxDTusDB+W/+DXpLW/M+gd7Sx7JfoIdse/4T2upY2PL36fUwHByOr5JmEeKujWsGqsNfhbL1bI1ULBlrinT3pTmsGbkd4bb5EPOov3zmqBqdPjdi/kwV78EpDPgN3A0Folg99P5sGVevi2uhyCAf0Nrj8/mIHznxv+wQ5+8tNnZSgu7USoXVRlBtaR65x6JEWlMMhrB5ovbJXoiKnAJOqCpG4XVJjpwUaFsXNoO1hHJ379PwYjilQgQYJ+bAFtxIsSaSVY/8E4aOsQa+y6cbR1hVIvR9EF5S6/V5fHZC5FrrvRlvMadICb4tPdOp5bMdJlV7twEhcybU0calYz8EEL8ZuOKJ0Ws2naU1CxfJOb3oAsev4qOiBBvNaW5cp9TRGQK6MsEXmjB2QludY+kJ9Alj2dRgKcYrSAoORYWHZjoYxDJN1d3kTixe1I9ctfj6MrX7f9sDL2F7C/NV//XbSDD+81z/zgpCjq5mT2g6DMW/IXy0rcDoy6ImM7bfnrMrGYrkfUM4IYrwyuSGFK9nPbBWWpg6l/I9L/IGUa4gRwaV9hADOAG0J7am0rELMmLaYnLXvnZeOhI4xD99T3J79XVZnUUtBWQrNlXAyNxcohkP1dgSUev1MzgQ6caEk2tOrAFKTK4oPkYmzlkoUCeNLVYY5yBiOxLhc06AOL19Jcd9aOmZ0GWqvFdsyK2N/ym8L1910+Hf8QGm0k1a+C86BW+3KQ6JY3serfkRwjVEYJy4cc7h1qREuwhcGxZlXnyM5dkRsm53TmolCK6tTcJhQ9qx4xjOlwVFk3Ymbt9b8IE91TXNFbWEQ8TVUTk57m7/nB8ZVB8XzoxKl4A=="
+      }],
+      "createTime": "2026-05-31T17:34:04.524Z"
+    }, {
+      "driveDocument": {
+        "id": "1b3m4CmC_d9OH8UNaZ4rrdEvGcJN7tiVE"
+      },
+      "role": "user",
+      "tokenCount": 299,
+      "createTime": "2026-05-31T17:35:12.157Z"
+    }, {
+      "text": "Uploading a test file. See if you can read it.",
+      "role": "user",
+      "tokenCount": 13,
+      "createTime": "2026-05-31T17:35:12.157Z"
+    }, {
+      "text": "**Acknowledging the File Content**\n\nOkay, I\u0027ve got the `litellm_config.txt` file and its contents in my grasp. The key now is confirming I can access and interpret it as a LiteLLM configuration file. I can see the structure is indeed YAML, so I\u0027m set to parse and understand its contents.\n\n\n",
+      "role": "model",
+      "tokenCount": 240,
+      "isThought": true,
+      "parts": [{
+        "text": "**Acknowledging the File Content**\n\nOkay, I\u0027ve got the `litellm_config.txt` file and its contents in my grasp. The key now is confirming I can access and interpret it as a LiteLLM configuration file. I can see the structure is indeed YAML, so I\u0027m set to parse and understand its contents.\n\n\n",
+        "thought": true
+      }],
+      "createTime": "2026-05-31T17:35:12.157Z"
+    }, {
+      "text": "I can read it perfectly! \n\nIt looks like a YAML configuration file for LiteLLM (`litellm_config.txt`). Here is a quick summary of what I see in the file:\n\n**Model List:**\n1. **`gpt-oss-120b`**: Routed to `cerebras/gpt-oss-120b`, using an environment variable for the API key, limited to 5 Requests Per Minute (RPM) and 30,000 Tokens Per Minute (TPM).\n2. **`groq-llama`**: Routed to `groq/llama-3.3-70b-versatile`, using an environment variable for the API key, limited to 30 RPM and 8,000 TPM.\n3. **`local-llama`**: Routed to a local OpenAI-compatible endpoint at `http://192.168.1.211:8080/v1`, using a dummy API key, with a very high rate limit (1,000 RPM / 1,000,000 TPM).\n\n**Router Settings:**\n* Set up to attempt **5 retries** (`num_retries: 5`).\n\nIs there anything specific you need help with regarding this configuration? I can help you add more models, adjust the load balancing/fallback settings, or troubleshoot any issues you might be having!",
+      "role": "model",
+      "finishReason": "STOP",
+      "tokenCount": 303,
+      "parts": [{
+        "text": "I can read it perfectly! \n\nIt"
+      }, {
+        "text": " looks like a YAML configuration file for LiteLLM (`litellm_config.txt`). Here is a quick summary of what"
+      }, {
+        "text": " I see in the file:\n\n**Model List:**\n1. **`gpt-oss-120b`**:"
+      }, {
+        "text": " Routed to `cerebras/gpt-oss-120b`, using an environment variable for the API key, limited"
+      }, {
+        "text": " to 5 Requests Per Minute (RPM) and 30,000 Tokens Per Minute (TPM).\n2. **"
+      }, {
+        "text": "`groq-llama`**: Routed to `groq/llama-3.3-70b-vers"
+      }, {
+        "text": "atile`, using an environment variable for the API key, limited to 30 RPM and 8,000 TPM.\n3"
+      }, {
+        "text": ". **`local-llama`**: Routed to a local OpenAI-compatible endpoint at `http://192."
+      }, {
+        "text": "168.1.211:8080/v1`, using a dummy API key,"
+      }, {
+        "text": " with a very high rate limit (1,000 RPM / 1,000,000 TPM)."
+      }, {
+        "text": "\n\n**Router Settings:**\n* Set up to attempt **5 retries** (`num_retries: 5`).\n\nIs there anything"
+      }, {
+        "text": " specific you need help with regarding this configuration? I can help you add more models, adjust the load balancing/fallback settings, or troubleshoot any issues"
+      }, {
+        "text": " you might be having!"
+      }, {
+        "text": "",
+        "thoughtSignature": "EqkICqYIAQw51seDutzOSmpRyX+LN3n6Aj83sxR4K7JB71ZxxazklnunZ8w9f1P5iMvRqBQPjtkwpwZ0q0GcWXt2DDcvXoT+7OcUkCw7tyEgxgrh4B5LH+XgvI023ZF4/cye/vItv0bxwXbiMzRU20jc0VJbSRgh7xy9bCpbaei/GkV0fl6gyCLm/xfqJHYrhouhABT1PfY/RLk/qIYhG7UGHHNs3WbaGOi63/MLgOyr9GAr8czx5Um8jZKo907Rp4UhCnF7pliVPNF/13kJ0Z8N7BNhN5gn3v31//bOXwmES6iJMkUDfTqYvG584J1FsDfL1gRlVBfixFGyugwG8ULG0DS8n2Pb89qxCrE0M+DKdnZnNGNrcBII6W7CZuQFLqNaGpGtlYmQ5R9GdMiDVIUSLi2+pKam2xlVlv7GeYKChP8CZj2AOFQ1IP9GIu7lDdqvnBdSZAVmPdUp2NA8Td7Fn3QTtS3ufWxXzcNjTkknMEvPTkfuuWSU8ZBVLygfC8BxkF7menQksTD3QzCwHeKE5ewHfUcTU7MsTfnpBN/Lg3IMMTcDlrUENo3+vZtmpJ1lRVMhitpvTTtNoEOg9+8kejlDkrAJYjG/PQGYT0Of9LkIyzAwSLAZZBegJTuRFccGce0hv6KOwanL8ZbuL7r8A2qqb43B1QuQ7e08AflfX6xgam8go8kczNQ+nqaWTwoCzcpJYUBSASm9MtBsIKT8BH8xPlZBvVDVRlFwidKIqPTZe2W3/mbC2pfXlLz835iaUINhzB/BDC+rAz2Jt5i1r8yI1rxIVP8JT3OsEi2xDPrdf0Sh9gT97EAjXPsPEKCBnnKkqx6ZaraGZS0zR8NOLUWuputmtxNgzykiF7vXYqz5xCvL23p6opQbIb55Jd6Jae9bVvh0/7FmqDaqWDnacXT0BdD6GuOlbMv4IdGLHb4WAe09LEdPx+J9RVtGJizIUOctCyNv7LhtT2xSrAkrjFkzwBevP7Iyul+yHa84kwk1rk/WZwz7VtxL9PaGHbmBFqb58Tqt2iZvHFV/oMdYOCQrh/HDQhmESL+AvYK9CWwHlkTrfPQiy8ePJYlI/wuEuM87o5yf3tau6NFA94WdEL+KKQr0wLitljrJ3zLrJGcdcDCsqOwjmfWF/YKRRFeTpWIOBwJlSKiUAPLzjTwzbfUGhw1icNwiFnGME15Z/56RaNOyaebi7Z8mITcqr3xRbKL8Eyi97yOnVBc4b9XAS2l7mkiQwYYCnwECKALu8HkLgZVP/3Tg0t7UyZ4CQKzUsgQb0p2SZsCaIfrNCPSnjCNp16yTEg+VpNIvnqdtkSeyxYJ9/q1pPYSojPkPRIfgpEvkeseKRPl0OdcWafOzaIHrXgl2GbVCTSzaj8llo4VGbslBeeex2TopETuquK0Htj/1Q8uMDWEQ"
+      }],
+      "createTime": "2026-05-31T17:35:15.956Z"
+    }],
+    "pendingInputs": [{
+      "text": "",
+      "role": "user"
+    }]
+  }
+}

@@ -1,0 +1,218 @@
+{
+  "runSettings": {
+    "temperature": 1.0,
+    "model": "models/gemini-pro-latest",
+    "topP": 0.95,
+    "topK": 64,
+    "maxOutputTokens": 65536,
+    "safetySettings": [{
+      "category": "HARM_CATEGORY_HARASSMENT",
+      "threshold": "OFF"
+    }, {
+      "category": "HARM_CATEGORY_HATE_SPEECH",
+      "threshold": "OFF"
+    }, {
+      "category": "HARM_CATEGORY_SEXUALLY_EXPLICIT",
+      "threshold": "OFF"
+    }, {
+      "category": "HARM_CATEGORY_DANGEROUS_CONTENT",
+      "threshold": "OFF"
+    }],
+    "enableCodeExecution": false,
+    "enableSearchAsATool": true,
+    "enableBrowseAsATool": false,
+    "enableAutoFunctionResponse": false,
+    "thinkingBudget": -1,
+    "googleSearch": {
+    },
+    "outputResolution": "1K",
+    "thinkingLevel": "THINKING_HIGH",
+    "enableImageSearch": false,
+    "enableGoogleMaps": false,
+    "enableAgentThinkingSummariesControl": false,
+    "enableAgentVisualizationControl": false,
+    "enableAgentCollaborativePlanningControl": false,
+    "environmentMode": "new"
+  },
+  "systemInstruction": {
+  },
+  "chunkedPrompt": {
+    "chunks": [{
+      "text": "Output all formatting styles you are capable of, bold listed items, code what have you.",
+      "role": "user",
+      "tokenCount": 19,
+      "createTime": "2026-06-01T16:47:31.529Z"
+    }, {
+      "text": "**Defining Capabilities**\n\nI\u0027m currently focused on fully grasping the user\u0027s ultimate goal: showcasing my formatting versatility. I\u0027m prioritizing bold text, lists, code blocks, and the general \"what have you\" style to demonstrate my broad abilities.\n\n\n**Cataloging Formatting Options**\n\nI\u0027ve moved on to a comprehensive catalog of Markdown formatting options, and I\u0027m detailing text styles, headers, different list types (ordered, unordered, nested, tasks), and code (inline and blocks) among other formatting options. I am also working on links, media, blockquotes, tables, horizontal rules, and HTML elements within markdown. I am also planning on working on Math/Latex integration.\n\n\n**Incorporating Math Support**\n\nI\u0027m now incorporating Math/Latex support, which seems standard. My plan is to include both inline ($E\u003dmc^2$) and block math ($$ ... $$) to cover all common needs. Next, I am drafting content, organized by section (Text Formatting, Headings, Lists, Code, Blockquotes, Tables, Links/Images, Horizontal Rules, and an Advanced section). I\u0027m also ensuring the content will demonstrate each Markdown feature clearly, and address specific user constraints like bolding listed items.\n\n\n**Constructing a Demonstration**\n\nI\u0027m now drafting the specific Markdown content to showcase my capabilities. I\u0027m focusing on a clean, structured presentation, and I\u0027m ensuring clarity in my Markdown, including headings, text formatting, lists (ordered, unordered, nested, and task), and inline code. I plan to use bolded terms within the lists to clarify and satisfy a user constraint.\n\n\n**Showcasing Diverse Code**\n\nI\u0027m now integrating code examples with syntax highlighting, blockquotes, tables (with alignment), links/images, horizontal rules, and LaTeX equations (inline and block). I\u0027m highlighting the varied use cases of these features within a structured format for clarity. Also, I added an example of a HTML element.\n\n\n",
+      "role": "model",
+      "tokenCount": 1475,
+      "isThought": true,
+      "parts": [{
+        "text": "**Defining Capabilities**\n\nI\u0027m currently focused on fully grasping the user\u0027s ultimate goal: showcasing my formatting versatility. I\u0027m prioritizing bold text, lists, code blocks, and the general \"what have you\" style to demonstrate my broad abilities.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Cataloging Formatting Options**\n\nI\u0027ve moved on to a comprehensive catalog of Markdown formatting options, and I\u0027m detailing text styles, headers, different list types (ordered, unordered, nested, tasks), and code (inline and blocks) among other formatting options. I am also working on links, media, blockquotes, tables, horizontal rules, and HTML elements within markdown. I am also planning on working on Math/Latex integration.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Incorporating Math Support**\n\nI\u0027m now incorporating Math/Latex support, which seems standard. My plan is to include both inline ($E\u003dmc^2$) and block math ($$ ... $$) to cover all common needs. Next, I am drafting content, organized by section (Text Formatting, Headings, Lists, Code, Blockquotes, Tables, Links/Images, Horizontal Rules, and an Advanced section). I\u0027m also ensuring the content will demonstrate each Markdown feature clearly, and address specific user constraints like bolding listed items.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Constructing a Demonstration**\n\nI\u0027m now drafting the specific Markdown content to showcase my capabilities. I\u0027m focusing on a clean, structured presentation, and I\u0027m ensuring clarity in my Markdown, including headings, text formatting, lists (ordered, unordered, nested, and task), and inline code. I plan to use bolded terms within the lists to clarify and satisfy a user constraint.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Showcasing Diverse Code**\n\nI\u0027m now integrating code examples with syntax highlighting, blockquotes, tables (with alignment), links/images, horizontal rules, and LaTeX equations (inline and block). I\u0027m highlighting the varied use cases of these features within a structured format for clarity. Also, I added an example of a HTML element.\n\n\n",
+        "thought": true
+      }],
+      "createTime": "2026-06-01T16:47:31.529Z"
+    }, {
+      "text": "I am capable of producing a wide variety of formatting styles using Markdown and basic HTML. Here is a comprehensive showcase of everything I can do:\n\n# Heading Level 1\n## Heading Level 2\n### Heading Level 3\n#### Heading Level 4\n##### Heading Level 5\n###### Heading Level 6\n\n---\n\n### Text Styling\nYou can mix and match various text formatting styles:\n*   **Bold**: **This text is bold.**\n*   **Italics**: *This text is italicized.*\n*   **Bold and Italics**: ***This text is both bold and italicized.***\n*   **Strikethrough**: ~~This text is crossed out.~~\n*   **Subscript**: H\u003csub\u003e2\u003c/sub\u003eO (using HTML `\u003csub\u003e`)\n*   **Superscript**: E \u003d mc\u003csup\u003e2\u003c/sup\u003e (using HTML `\u003csup\u003e`)\n*   **Highlighted**: \u003cmark\u003eThis text is highlighted\u003c/mark\u003e (using HTML `\u003cmark\u003e`)\n*   **Keyboard Input**: Press \u003ckbd\u003eCtrl\u003c/kbd\u003e + \u003ckbd\u003eC\u003c/kbd\u003e to copy (using HTML `\u003ckbd\u003e`)\n\n---\n\n### Lists\nHere are different types of lists, with **bolded listed items** as you requested:\n\n**Ordered (Numbered) List:**\n1. **First item in the list**\n2. **Second item in the list**\n3. **Third item in the list**\n\n**Unordered (Bullet) List with Nesting:**\n*   **Main category**\n    *   **Sub-category A**\n    *   **Sub-category B**\n        *   **Deeply nested item**\n*   **Another main category**\n\n**Task Lists:**\n* [x] **Completed task**\n* [ ] **Pending task**\n* [ ] **Another pending task**\n\n---\n\n### Code\nI can format code seamlessly, either inline or as multi-line blocks with syntax highlighting.\n\n**Inline Code:**\nTo print a message in Python, use the `print()` function.\n\n**Code Block (with Python syntax highlighting):**\n```python\ndef calculate_fibonacci(n):\n    \"\"\"Returns a list containing the Fibonacci sequence up to n.\"\"\"\n    sequence \u003d [0, 1]\n    while len(sequence) \u003c n:\n        next_value \u003d sequence[-1] + sequence[-2]\n        sequence.append(next_value)\n    return sequence\n\n# Generate the first 5 numbers\nprint(calculate_fibonacci(5))\n```\n\n---\n\n### Blockquotes\nI can quote text, which is useful for referencing excerpts or highlighting important notes.\n\n\u003e This is a standard blockquote. It spans across multiple lines and stands out from the rest of the text.\n\u003e \n\u003e \u003e I can also create nested blockquotes if you need to show a conversation or quoted replies.\n\n---\n\n### Tables\nI can organize data into aligned tables:\n\n| **Feature** | **Description** | **Status** |\n| :--- | :---: | ---: |\n| **Left Aligned** | Text sits on the left | **Active** |\n| **Center Aligned** | Text sits in the middle | **Pending** |\n| **Right Aligned** | Text sits on the right | **Completed** |\n\n---\n\n### Links and Media\n*   **Hyperlinks**: [Click here to visit Wikipedia](https://www.wikipedia.org/)\n*   **Images**: I can display images if provided with a valid direct URL.\n    ![Placeholder Image](https://upload.wikimedia.org/wikipedia/commons/thumb/3/3f/Placeholder_view_vector.svg/100px-Placeholder_view_vector.svg.png)\n\n---\n\n### Mathematics (LaTeX)\nI support rendering LaTeX mathematical formulas. \n\n**Inline Math:**\nThe Pythagorean theorem is $a^2 + b^2 \u003d c^2$.\n\n**Block Math Equation:**\n$$ f(x) \u003d \\int_{-\\infty}^{\\infty} \\hat{f}(\\xi)\\,e^{2 \\pi i \\xi x} \\,d\\xi $$\n\n---\n\n### Collapsible Sections\nFor extremely long outputs, I can use HTML to hide text behind a dropdown menu:\n\n\u003cdetails\u003e\n\u003csummary\u003e\u003cb\u003eClick here to expand and reveal a secret message!\u003c/b\u003e\u003c/summary\u003e\n\u003cbr\u003e\nHello there! You found the hidden text. This is great for keeping long code snippets or extra details out of the way until you need them.\n\u003c/details\u003e\n\n---\n*(Note: The exact visual appearance of these styles, especially Math and HTML elements, depends slightly on the specific interface or platform you are using to view my messages.)*",
+      "role": "model",
+      "finishReason": "STOP",
+      "tokenCount": 1003,
+      "parts": [{
+        "text": "I am capable of producing"
+      }, {
+        "text": " a wide variety of formatting styles using Markdown and basic HTML. Here is a comprehensive showcase of everything I can do:\n\n# Heading"
+      }, {
+        "text": " Level 1\n## Heading Level 2\n### Heading Level 3\n#### Heading Level 4\n##### Heading Level"
+      }, {
+        "text": " 5\n###### Heading Level 6\n\n---\n\n### Text Styling\nYou can mix and match various text formatting styles:\n*   **"
+      }, {
+        "text": "Bold**: **This text is bold.**\n*   **Italics**: *This text is italicized.*\n"
+      }, {
+        "text": "*   **Bold and Italics**: ***This text is both bold and italicized.***\n*   **Striketh"
+      }, {
+        "text": "rough**: ~~This text is crossed out.~~\n*   **Subscript**: H\u003csub\u003e2\u003c/sub\u003eO (using"
+      }, {
+        "text": " HTML `\u003csub\u003e`)\n*   **Superscript**: E \u003d mc\u003csup\u003e2\u003c/sup\u003e (using HTML `\u003csup\u003e`)\n*"
+      }, {
+        "text": "   **Highlighted**: \u003cmark\u003eThis text is highlighted\u003c/mark\u003e (using HTML `\u003cmark\u003e`)\n*   **Keyboard Input**:"
+      }, {
+        "text": " Press \u003ckbd\u003eCtrl\u003c/kbd\u003e + \u003ckbd\u003eC\u003c/kbd\u003e to copy (using HTML `\u003ckbd\u003e"
+      }, {
+        "text": "`)\n\n---\n\n### Lists\nHere are different types of lists, with **bolded listed items** as you requested:\n\n**"
+      }, {
+        "text": "Ordered (Numbered) List:**\n1. **First item in the list**\n2. **Second item in the list"
+      }, {
+        "text": "**\n3. **Third item in the list**\n\n**Unordered (Bullet) List with Nesting:**\n*   "
+      }, {
+        "text": "**Main category**\n    *   **Sub-category A**\n    *   **Sub-category B**\n        *   "
+      }, {
+        "text": "**Deeply nested item**\n*   **Another main category**\n\n**Task Lists:**\n* [x] **Completed"
+      }, {
+        "text": " task**\n* [ ] **Pending task**\n* [ ] **Another pending task**\n\n---\n\n### Code\nI can format code"
+      }, {
+        "text": " seamlessly, either inline or as multi-line blocks with syntax highlighting.\n\n**Inline Code:**\nTo print a message in"
+      }, {
+        "text": " Python, use the `print()` function.\n\n**Code Block (with Python syntax highlighting):**\n```python\ndef calculate"
+      }, {
+        "text": "_fibonacci(n):\n    \"\"\"Returns a list containing the Fibonacci sequence up to n.\"\"\"\n    sequence \u003d"
+      }, {
+        "text": " [0, 1]\n    while len(sequence) \u003c n:\n        next_value \u003d sequence"
+      }, {
+        "text": "[-1] + sequence[-2]\n        sequence.append(next_value)\n    return sequence\n\n# Generate the first 5"
+      }, {
+        "text": " numbers\nprint(calculate_fibonacci(5))\n```\n\n---\n\n### Blockquotes\nI can quote text"
+      }, {
+        "text": ", which is useful for referencing excerpts or highlighting important notes.\n\n\u003e This is a standard blockquote. It spans across multiple lines and"
+      }, {
+        "text": " stands out from the rest of the text.\n\u003e \n\u003e \u003e I can also create nested blockquotes if you"
+      }, {
+        "text": " need to show a conversation or quoted replies.\n\n---\n\n### Tables\nI can organize data into aligned tables:\n\n| **Feature"
+      }, {
+        "text": "** | **Description** | **Status** |\n| :--- | :---: | ---: |\n|"
+      }, {
+        "text": " **Left Aligned** | Text sits on the left | **Active** |\n| **Center Aligned** | Text sits"
+      }, {
+        "text": " in the middle | **Pending** |\n| **Right Aligned** | Text sits on the right | **Completed"
+      }, {
+        "text": "** |\n\n---\n\n### Links and Media\n*   **Hyperlinks**: [Click here to visit Wikipedia](https://www.wikipedia"
+      }, {
+        "text": ".org/)\n*   **Images**: I can display images if provided with a valid direct URL.\n    !"
+      }, {
+        "text": "[Placeholder Image](https://upload.wikimedia.org/wikipedia/commons/thumb/3/3f/Placeholder_view"
+      }, {
+        "text": "_vector.svg/100px-Placeholder_view_vector.svg.png)\n\n---\n\n###"
+      }, {
+        "text": " Mathematics (LaTeX)\nI support rendering LaTeX mathematical formulas. \n\n**Inline Math:**\nThe Pythagorean theorem is $a"
+      }, {
+        "text": "^2 + b^2 \u003d c^2$.\n\n**Block Math Equation:**\n$$ f(x) \u003d \\int_{-\\infty"
+      }, {
+        "text": "}^{\\infty} \\hat{f}(\\xi)\\,e^{2 \\pi i \\xi x} \\,d\\xi"
+      }, {
+        "text": " $$\n\n---\n\n### Collapsible Sections\nFor extremely long outputs, I can use HTML to hide text behind a dropdown menu:\n\n\u003cdetails"
+      }, {
+        "text": "\u003e\n\u003csummary\u003e\u003cb\u003eClick here to expand and reveal a secret message!\u003c/b\u003e\u003c/summary\u003e\n\u003cbr\u003e\nHello"
+      }, {
+        "text": " there! You found the hidden text. This is great for keeping long code snippets or extra details out of the way until"
+      }, {
+        "text": " you need them.\n\u003c/details\u003e\n\n---\n*(Note: The exact visual appearance of these styles, especially Math"
+      }, {
+        "text": " and HTML elements, depends slightly on the specific interface or platform you are using to view my messages.)*"
+      }, {
+        "text": "",
+        "thoughtSignature": "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"
+      }],
+      "createTime": "2026-06-01T16:47:45.517Z"
+    }, {
+      "driveImage": {
+        "id": "1Iszg-0raAr99SA7RIBNuAOObQmD89cKt"
+      },
+      "role": "user",
+      "tokenCount": 1081,
+      "createTime": "2026-06-01T17:20:42.264Z"
+    }, {
+      "text": "testing image upload.",
+      "role": "user",
+      "tokenCount": 5,
+      "createTime": "2026-06-01T17:20:42.264Z"
+    }, {
+      "text": "**Assessing the Upload Test**\n\nI\u0027m currently focused on the image upload test. My analysis confirms this is a simple check of functionality, following a request regarding formatting styles. I understand the user\u0027s intent: a quick verification of the image upload process. No further action is immediately needed, just confirmation that the function is working.\n\n\n**Confirming the Screenshot**\n\nI\u0027ve received the image and confirm it\u0027s a screenshot. I\u0027m noting the application window title: \"Google AI Studio Viewer.\" The layout includes three distinct panes: a conversations list, a user prompts list, and the AI response pane. I see conversations regarding various topics, including several mentions of AI models and a future one, gemini-3-flash-preview. The right pane shows a formatted markdown response for troubleshooting a washing machine.\n\n\n",
+      "role": "model",
+      "tokenCount": 509,
+      "isThought": true,
+      "parts": [{
+        "text": "**Assessing the Upload Test**\n\nI\u0027m currently focused on the image upload test. My analysis confirms this is a simple check of functionality, following a request regarding formatting styles. I understand the user\u0027s intent: a quick verification of the image upload process. No further action is immediately needed, just confirmation that the function is working.\n\n\n",
+        "thought": true
+      }, {
+        "text": "**Confirming the Screenshot**\n\nI\u0027ve received the image and confirm it\u0027s a screenshot. I\u0027m noting the application window title: \"Google AI Studio Viewer.\" The layout includes three distinct panes: a conversations list, a user prompts list, and the AI response pane. I see conversations regarding various topics, including several mentions of AI models and a future one, gemini-3-flash-preview. The right pane shows a formatted markdown response for troubleshooting a washing machine.\n\n\n",
+        "thought": true
+      }],
+      "createTime": "2026-06-01T17:20:42.265Z"
+    }, {
+      "text": "The image upload was successful! \n\nI can see a screenshot of a desktop application titled **\"Google AI Studio Viewer.\"** \n\nHere is a quick breakdown of what is visible in the image to confirm:\n*   **Left sidebar (Conversations):** A list of chat histories, with the active one being *\"Testing a Triac With a Multimeter\"* using the `gemini-3-flash-preview` model. Other chats include topics like \"Hackintosh Sequoia Update\" and \"Getting Google OAuth Credentials.\"\n*   **Bottom left (User Prompts):** Shows queries about testing a BTA316 800a triac and troubleshooting a Candy front loader washing machine that is aborting its spin cycle.\n*   **Main right panel (AI Response):** Displays a detailed troubleshooting guide covering \"Motor Brushes (The \u0027Aborting Spin\u0027 Clue)\", the difference between BTA and BTB triac insulation, checking the relay, and reading error codes.\n\nLet me know if you want to test anything else or if you need help formatting or analyzing specific text from this image!",
+      "role": "model",
+      "finishReason": "STOP",
+      "tokenCount": 230,
+      "parts": [{
+        "text": "The image upload was successful! \n\nI can see"
+      }, {
+        "text": " a screenshot of a desktop application titled **\"Google AI Studio Viewer.\"** \n\nHere is a quick breakdown of what is"
+      }, {
+        "text": " visible in the image to confirm:\n*   **Left sidebar (Conversations):** A list of chat histories, with"
+      }, {
+        "text": " the active one being *\"Testing a Triac With a Multimeter\"* using the `gemini-3-flash-preview` model."
+      }, {
+        "text": " Other chats include topics like \"Hackintosh Sequoia Update\" and \"Getting Google OAuth Credentials.\"\n*   **Bottom left (User"
+      }, {
+        "text": " Prompts):** Shows queries about testing a BTA316 800a triac and troubleshooting a Candy front loader washing machine"
+      }, {
+        "text": " that is aborting its spin cycle.\n*   **Main right panel (AI Response):** Displays a detailed troubleshooting guide covering"
+      }, {
+        "text": " \"Motor Brushes (The \u0027Aborting Spin\u0027 Clue)\", the difference between BTA and BTB triac"
+      }, {
+        "text": " insulation, checking the relay, and reading error codes.\n\nLet me know if you want to test anything else or if you need"
+      }, {
+        "text": " help formatting or analyzing specific text from this image!"
+      }, {
+        "text": "",
+        "thoughtSignature": "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"
+      }],
+      "createTime": "2026-06-01T17:20:50.007Z"
+    }],
+    "pendingInputs": [{
+      "text": "",
+      "role": "user"
+    }]
+  }
+}

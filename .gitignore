@@ -1,0 +1,49 @@
+# Build
+build/
+cmake-build-*/
+
+# IDE
+.vs/
+*.user
+*.user.*
+CMakeLists.txt.user
+*.opensdf
+*.sdf
+*.suo
+*.cache
+*.VC.db
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Qt Creator
+*.autosave
+*.pro.user*
+moc_*.cpp
+ui_*.h
+qrc_*.cpp
+Makefile*
+debug/
+release/
+
+# Compiled
+*.o
+*.obj
+*.exe
+*.lib
+*.dll
+*.pdb
+*.ilk
+*.exp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Config (template only - user provides their own)
+config/oauth_config.json
+
+# Logs
+*.log

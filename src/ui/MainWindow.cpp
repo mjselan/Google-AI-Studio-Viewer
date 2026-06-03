@@ -1,0 +1,302 @@
+#include "MainWindow.h"
+#include "ConversationListPane.h"
+#include "PromptListPane.h"
+#include "ResponsePane.h"
+#include "SearchDialog.h"
+#include "app/AuthManager.h"
+#include "api/DriveApi.h"
+#include "api/ConversationModel.h"
+#include "models/Conversation.h"
+#include "app/Logger.h"
+#include <QMessageBox>
+#include <QVBoxLayout>
+#include <QInputDialog>
+#include <QApplication>
+#include <QFileInfo>
+
+MainWindow::MainWindow(QWidget *parent)
+    : QMainWindow(parent)
+    , m_auth(new AuthManager(this))
+    , m_drive(new DriveApi(this))
+    , m_convModel(new ConversationModel(this))
+    , m_convPane(new ConversationListPane(this))
+    , m_promptPane(new PromptListPane(this))
+    , m_responsePane(new ResponsePane(this))
+    , m_searchDlg(nullptr)
+{
+    setupUi();
+    setupToolbar();
+    setupStatusBar();
+
+    connect(m_auth, &AuthManager::authSuccess, this, [this]()
+    {
+        Logger::instance().info("Auth success");
+        m_drive->setAccessToken(m_auth->accessToken());
+        m_drive->findFolder("Google AI Studio");
+        m_signInAction->setVisible(false);
+        m_signOutAction->setVisible(true);
+        statusBar()->showMessage("Authenticated. Locating conversations...");
+    });
+
+    connect(m_auth, &AuthManager::authFailed, this, [this](const QString &err)
+    {
+        Logger::instance().error("Auth failed: " + err);
+        statusBar()->showMessage("Auth failed: " + err);
+        QMessageBox::warning(this, "Auth Error", err);
+    });
+
+    connect(m_drive, &DriveApi::folderFound, this, [this](const QString &folderId)
+    {
+        Logger::instance().info("Google AI Studio folder found: " + folderId);
+        onFolderFound(folderId);
+    });
+    connect(m_drive, &DriveApi::folderNotFound, this, [this]()
+    {
+        Logger::instance().error("Google AI Studio folder not found");
+        statusBar()->showMessage("'Google AI Studio' folder not found in Drive");
+    });
+    connect(m_drive, &DriveApi::conversationListReady, this, &MainWindow::onConversationsLoaded);
+    connect(m_drive, &DriveApi::conversationDownloaded, this,
+        [this](const QString &fileId, const QString &fileName, const QJsonObject &data)
+        {
+            Logger::instance().debug(QString("Downloaded: '%1' (%2)").arg(fileName, fileId));
+            Conversation conv = m_convModel->parseConversation(fileId, fileName, data);
+            Logger::instance().debug(
+                QString("Parsed: '%1' model='%2' chunks=%3 pairs=%4")
+                    .arg(fileName, conv.model)
+                    .arg(conv.messages.size())
+                    .arg(conv.pairs.size()));
+            m_convPane->addConversation(conv);
+        });
+    connect(m_drive, &DriveApi::apiError, this, [this](const QString &err)
+    {
+        Logger::instance().error("API error: " + err);
+        statusBar()->showMessage("API error: " + err);
+    });
+
+    connect(m_drive, &DriveApi::tokenNeedsRefresh, this, [this]()
+    {
+        statusBar()->showMessage("Token expired. Refreshing...");
+        m_auth->refreshAccessToken();
+    });
+
+    connect(m_auth, &AuthManager::tokenRefreshed, this, [this]()
+    {
+        m_drive->setAccessToken(m_auth->accessToken());
+        m_drive->retryPendingRequests();
+        statusBar()->showMessage("Token refreshed. Continuing...");
+    });
+
+    connect(m_convPane, &ConversationListPane::conversationSelected,
+        this, &MainWindow::onConversationSelected);
+    connect(m_promptPane, &PromptListPane::promptSelected,
+        this, &MainWindow::onPromptSelected);
+
+    connect(m_auth, &AuthManager::authCodeRequired, this,
+        [this](const QString &authUrl)
+        {
+            bool ok;
+            QString code = QInputDialog::getText(this, "Google Auth",
+                "1. Sign in with the browser that opened.\n"
+                "2. Copy the code shown by Google.\n"
+                "3. Paste it here and press OK.\n\n"
+                "If the browser didn't open, visit:\n" + authUrl,
+                QLineEdit::Normal, QString(), &ok);
+            if (ok && !code.trimmed().isEmpty())
+                m_auth->submitAuthCode(code.trimmed());
+        });
+}
+
+MainWindow::~MainWindow() {}
+
+void MainWindow::setupUi()
+{
+    m_mainSplitter = new QSplitter(Qt::Horizontal, this);
+    m_leftSplitter = new QSplitter(Qt::Vertical, this);
+
+    m_leftSplitter->addWidget(m_convPane);
+    m_leftSplitter->addWidget(m_promptPane);
+    m_leftSplitter->setStretchFactor(0, 1);
+    m_leftSplitter->setStretchFactor(1, 1);
+
+    m_mainSplitter->addWidget(m_leftSplitter);
+    m_mainSplitter->addWidget(m_responsePane);
+    m_mainSplitter->setStretchFactor(0, 1);
+    m_mainSplitter->setStretchFactor(1, 3);
+
+    setCentralWidget(m_mainSplitter);
+}
+
+void MainWindow::setupToolbar()
+{
+    m_toolbar = addToolBar("Main");
+    m_toolbar->setMovable(false);
+
+    m_signInAction = m_toolbar->addAction("Sign In with Google");
+    connect(m_signInAction, &QAction::triggered, this, &MainWindow::onSignIn);
+
+    m_signOutAction = m_toolbar->addAction("Sign Out");
+    m_signOutAction->setVisible(false);
+    connect(m_signOutAction, &QAction::triggered, this, &MainWindow::onSignOut);
+
+    m_toolbar->addSeparator();
+
+    m_searchAction = m_toolbar->addAction("Search");
+    connect(m_searchAction, &QAction::triggered, this, &MainWindow::onSearchTriggered);
+
+    m_toggleThoughts = m_toolbar->addAction("Show Thoughts");
+    m_toggleThoughts->setCheckable(true);
+    m_toggleThoughts->setChecked(false);
+    connect(m_toggleThoughts, &QAction::toggled, this, &MainWindow::onToggleThoughts);
+
+    m_toolbar->addSeparator();
+
+    m_sortCombo = new QComboBox(this);
+    m_sortCombo->addItems({"Newest First", "Oldest First", "Alphabetical A-Z", "Alphabetical Z-A"});
+    m_toolbar->addWidget(m_sortCombo);
+    connect(m_sortCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+        this, &MainWindow::onSortChanged);
+}
+
+void MainWindow::setupStatusBar()
+{
+    statusBar()->showMessage("Ready. Sign in to get started.");
+}
+
+void MainWindow::onSignIn()
+{
+    QString userProfilePath = qEnvironmentVariable("USERPROFILE");
+    QString configPath = userProfilePath + "\\Documents\\AI\\oauth_config.json";
+
+    m_auth->loadConfig(configPath);
+    if (!m_auth->isAuthenticated())
+        m_auth->authenticate();
+    else
+    {
+        m_drive->setAccessToken(m_auth->accessToken());
+        m_drive->findFolder("Google AI Studio");
+    }
+}
+
+void MainWindow::onSignOut()
+{
+    m_auth->signOut();
+    m_signInAction->setVisible(true);
+    m_signOutAction->setVisible(false);
+    m_convPane->clear();
+    m_promptPane->clear();
+    m_responsePane->clear();
+    statusBar()->showMessage("Signed out.");
+}
+
+void MainWindow::onFolderFound(const QString &folderId)
+{
+    m_currentFolderId = folderId;
+    statusBar()->showMessage("Loading conversations...");
+    m_drive->listConversations(folderId);
+}
+
+void MainWindow::onConversationsLoaded(const QList<QPair<QString, QString>> &files)
+{
+    m_conversationFiles = files;
+    Logger::instance().info(QString("Found %1 conversation files").arg(files.size()));
+    statusBar()->showMessage(QString("Found %1 conversations. Downloading...").arg(files.size()));
+
+    for (const auto &f : files)
+    {
+        Logger::instance().debug(QString("Downloading: '%1' (%2)").arg(f.second, f.first));
+        m_drive->downloadConversation(f.first, f.second);
+    }
+
+    m_convPane->setFileList(files);
+}
+
+void MainWindow::onConversationSelected(int index)
+{
+    if (index < 0 || index >= m_convPane->conversationCount())
+    {
+        Logger::instance().warn(
+            QString("Conversation selected out of range: index=%1 count=%2")
+                .arg(index).arg(m_convPane->conversationCount()));
+        return;
+    }
+
+    m_selectedConvIndex = index;
+    const auto &conv = m_convPane->conversationAt(index);
+
+    Logger::instance().info(
+        QString("Conversation loaded: '%1' pairs=%2 tokens=%3")
+            .arg(conv.fileName)
+            .arg(conv.pairs.size())
+            .arg(conv.totalTokenCount()));
+
+    m_promptPane->setConversation(conv);
+    m_responsePane->clear();
+
+    statusBar()->showMessage(
+        QString("Conversation: %1 | %2 pairs | %3 tokens")
+            .arg(conv.fileName)
+            .arg(conv.pairs.size())
+            .arg(conv.totalTokenCount()));
+}
+
+void MainWindow::onPromptSelected(int pairIndex)
+{
+    if (m_selectedConvIndex < 0)
+    {
+        Logger::instance().warn("Prompt selected but no conversation selected");
+        return;
+    }
+
+    const auto &conv = m_convPane->conversationAt(m_selectedConvIndex);
+    if (pairIndex < 0 || pairIndex >= conv.pairs.size())
+    {
+        Logger::instance().warn(
+            QString("Prompt pair index out of range: pairIndex=%1 pairs=%2")
+                .arg(pairIndex).arg(conv.pairs.size()));
+        return;
+    }
+
+    const auto &pair = conv.pairs.at(pairIndex);
+    bool showThoughts = m_toggleThoughts->isChecked();
+
+    Logger::instance().debug(
+        QString("Showing response for prompt %1: '%2'")
+            .arg(pairIndex)
+            .arg(pair.prompt.text.left(50)));
+
+    m_responsePane->showResponse(pair, showThoughts, m_drive);
+}
+
+void MainWindow::onSearchTriggered()
+{
+    if (!m_searchDlg)
+        m_searchDlg = new SearchDialog(m_convPane->allConversations(), this);
+
+    m_searchDlg->show();
+    m_searchDlg->raise();
+    m_searchDlg->activateWindow();
+}
+
+void MainWindow::onToggleThoughts(bool visible)
+{
+    Q_UNUSED(visible)
+    // Refresh current view
+    if (m_selectedConvIndex >= 0)
+    {
+        int promptIndex = m_promptPane->currentIndex();
+        if (promptIndex >= 0)
+            onPromptSelected(promptIndex);
+    }
+}
+
+void MainWindow::onSortChanged(int index)
+{
+    switch (index)
+    {
+    case 0: m_convPane->sortBy(ConversationListPane::NewestFirst); break;
+    case 1: m_convPane->sortBy(ConversationListPane::OldestFirst); break;
+    case 2: m_convPane->sortBy(ConversationListPane::AlphaAZ); break;
+    case 3: m_convPane->sortBy(ConversationListPane::AlphaZA); break;
+    }
+}
