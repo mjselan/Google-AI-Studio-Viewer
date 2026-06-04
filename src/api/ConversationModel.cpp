@@ -32,11 +32,15 @@ Conversation ConversationModel::parseConversation(const QString &fileId,
     for (const auto &chunk : chunks)
         conv.messages.append(Message::fromJson(chunk.toObject()));
 
-    // Sort messages chronologically so pairs build in correct order
+    // Sort messages chronologically; user before model for same timestamp
     std::sort(conv.messages.begin(), conv.messages.end(),
         [](const Message &a, const Message &b)
         {
-            return a.createTime < b.createTime;
+            if (a.createTime != b.createTime)
+                return a.createTime < b.createTime;
+            if (a.role != b.role)
+                return a.role == "user";
+            return false;
         });
 
     Logger::instance().info(
