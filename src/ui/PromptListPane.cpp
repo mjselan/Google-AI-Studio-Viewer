@@ -61,10 +61,15 @@ void PromptListPane::refreshList()
         else if (preview.isEmpty())
             preview = "(empty prompt)";
 
+        QString dateStr = pair.prompt.createTime.isValid()
+            ? pair.prompt.createTime.toLocalTime().toString("yyyy-MM-dd hh:mm")
+            : "";
+
         auto *item = new QListWidgetItem(
-            QString("%1\n[%2 tok]")
+            QString("%1\n[%2 tok]  %3")
                 .arg(preview)
-                .arg(pair.prompt.tokenCount));
+                .arg(pair.prompt.tokenCount)
+                .arg(dateStr));
         m_list->addItem(item);
     }
 
