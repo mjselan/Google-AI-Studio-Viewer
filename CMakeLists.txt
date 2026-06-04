@@ -49,6 +49,7 @@ set(HEADERS
 
 add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS}
     src/app/patch.diff)
+set_target_properties(${PROJECT_NAME} PROPERTIES WIN32_EXECUTABLE TRUE)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Core

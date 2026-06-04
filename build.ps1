@@ -4,7 +4,7 @@ param(
     [string]$Config = "Debug"
 )
 
-$vcvars = "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvarsamd64_x86.bat"
+$vcvars = "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat"
 $cmakeGen = "Ninja"
 $ninja = "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe"
 $qtPrefix = "C:/Qt/6.9.3/msvc2022_64"
