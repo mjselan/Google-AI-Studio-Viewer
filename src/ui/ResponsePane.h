@@ -5,6 +5,7 @@
 #include <QVBoxLayout>
 #include <QCheckBox>
 #include <QList>
+#include <QPointer>
 #include "models/Conversation.h"
 
 class DriveApi;

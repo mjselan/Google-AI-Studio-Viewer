@@ -141,11 +141,13 @@ void ResponsePane::appendFileAttachment(const QString &fileId, DriveApi *drive)
     m_layout->addWidget(preview);
     m_filePreviews.append(preview);
 
+    QPointer<FilePreviewWidget> safePreview(preview);
+
     connect(drive, &DriveApi::attachmentDownloaded, this,
-        [this, preview, fileId](const QString &id, const QByteArray &data, const QString &mimeType)
+        [this, safePreview, fileId](const QString &id, const QByteArray &data, const QString &mimeType)
         {
-            if (id == fileId)
-                preview->setContent(data, mimeType);
+            if (id == fileId && safePreview)
+                safePreview->setContent(data, mimeType);
         });
 
     drive->downloadAttachment(fileId);
