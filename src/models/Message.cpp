@@ -8,10 +8,18 @@ Message Message::fromJson(const QJsonObject &obj)
     m.text = obj["text"].toString();
     m.role = obj["role"].toString();
     m.tokenCount = obj["tokenCount"].toInt();
-    m.createTime = QDateTime::fromString(obj["createTime"].toString(), Qt::ISODateWithMs);
     m.isThought = obj["isThought"].toBool(false);
     m.finishReason = obj["finishReason"].toString();
     m.parts = obj["parts"].toArray();
+
+    // Parse createTime — handle Z suffix robustly
+    QString ts = obj["createTime"].toString();
+    m.createTime = QDateTime::fromString(ts, Qt::ISODateWithMs);
+    if (!m.createTime.isValid() && ts.endsWith('Z'))
+        m.createTime = QDateTime::fromString(ts.chopped(1) + "+00:00", Qt::ISODateWithMs);
+    if (!m.createTime.isValid())
+        Logger::instance().warn(
+            QString("[Message] Failed to parse createTime: '%1'").arg(ts));
 
     if (obj.contains("driveDocument"))
     {
@@ -20,6 +28,13 @@ Message Message::fromJson(const QJsonObject &obj)
         Logger::instance().debug(
             QString("[Message] driveDocument found: id='%1' name='%2' mime='%3'")
                 .arg(m.driveDocumentId, dd["name"].toString(), dd["mimeType"].toString()));
+    }
+    else if (obj.contains("driveImage"))
+    {
+        QJsonObject di = obj["driveImage"].toObject();
+        m.driveDocumentId = di["id"].toString();
+        Logger::instance().info(
+            QString("[Message] driveImage found: id='%1'").arg(m.driveDocumentId));
     }
 
     // Check parts for inline image data (pasted images)
@@ -43,7 +58,7 @@ Message Message::fromJson(const QJsonObject &obj)
         }
     }
 
-    // Log the full chunk if no text and no driveDocument — likely image-only
+    // Log the full chunk if empty-text with no drive reference — likely image-only
     if (m.text.isEmpty() && m.driveDocumentId.isEmpty() && m.role == "user")
     {
         Logger::instance().warn(
