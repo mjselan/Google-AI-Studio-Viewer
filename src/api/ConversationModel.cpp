@@ -2,6 +2,7 @@
 #include "app/Logger.h"
 #include <QJsonArray>
 #include <QJsonDocument>
+#include <algorithm>
 
 ConversationModel::ConversationModel(QObject *parent)
     : QObject(parent) {}
@@ -30,6 +31,13 @@ Conversation ConversationModel::parseConversation(const QString &fileId,
             .arg(fileName).arg(chunks.size()).arg(conv.pairs.size()));
     for (const auto &chunk : chunks)
         conv.messages.append(Message::fromJson(chunk.toObject()));
+
+    // Sort messages chronologically so pairs build in correct order
+    std::sort(conv.messages.begin(), conv.messages.end(),
+        [](const Message &a, const Message &b)
+        {
+            return a.createTime < b.createTime;
+        });
 
     Logger::instance().info(
         QString("[ConversationModel] '%1' parsed: %2 messages")
