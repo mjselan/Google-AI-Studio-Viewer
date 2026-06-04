@@ -121,7 +121,7 @@ void ConversationListPane::refreshList()
         int tok = conv.totalTokenCount();
         QString modelShort = conv.model.section('/', -1);
         QString dateStr = conv.lastMessageTime().isValid()
-            ? conv.lastMessageTime().toLocalTime().toString("yyyy-MM-dd hh:mm")
+            ? conv.lastMessageTime().toLocalTime().toString("yyyy-MM-dd hh:mm:ss")
             : "";
 
         auto *item = new QListWidgetItem(

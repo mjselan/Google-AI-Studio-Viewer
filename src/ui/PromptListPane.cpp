@@ -62,7 +62,7 @@ void PromptListPane::refreshList()
             preview = "(empty prompt)";
 
         QString dateStr = pair.prompt.createTime.isValid()
-            ? pair.prompt.createTime.toLocalTime().toString("yyyy-MM-dd hh:mm")
+            ? pair.prompt.createTime.toLocalTime().toString("yyyy-MM-dd hh:mm:ss")
             : "";
 
         auto *item = new QListWidgetItem(
