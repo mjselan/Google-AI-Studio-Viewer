@@ -6,11 +6,12 @@ param(
 
 $vcvars = "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvarsamd64_x86.bat"
 $cmakeGen = "Ninja"
+$ninja = "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe"
 $qtPrefix = "C:/Qt/6.9.3/msvc2022_64"
 $buildDir = "build"
 
 if (-not (Test-Path "$buildDir/CMakeCache.txt")) {
-    $cmakeConfigure = "cmake -S . -B $buildDir -G `"$cmakeGen`" -DCMAKE_PREFIX_PATH=`"$qtPrefix`" -DCMAKE_BUILD_TYPE=$Config"
+    $cmakeConfigure = "cmake -S . -B $buildDir -G `"$cmakeGen`" -DCMAKE_MAKE_PROGRAM=`"$ninja`" -DCMAKE_PREFIX_PATH=`"$qtPrefix`" -DCMAKE_BUILD_TYPE=$Config"
 } else {
     $cmakeConfigure = "@rem configure skipped"
 }
