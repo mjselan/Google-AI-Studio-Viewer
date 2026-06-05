@@ -2,6 +2,7 @@
 
 #include <QWidget>
 #include <QListWidget>
+#include <QList>
 #include "models/Conversation.h"
 
 class PromptListPane : public QWidget
@@ -18,8 +19,18 @@ signals:
     void promptSelected(int pairIndex);
 
 private:
+    struct Entry
+    {
+        int pairIndex;
+        QString role;
+        QString text;
+        int tokenCount;
+        QDateTime createTime;
+    };
+
     void refreshList();
 
     QListWidget *m_list;
     Conversation m_currentConv;
+    QList<int> m_rowToPair;
 };
