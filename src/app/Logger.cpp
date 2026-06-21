@@ -5,7 +5,7 @@
 #include <iostream>
 #include <QApplication>
 
-#define NO_LOGGING
+//#define NO_LOGGING
 
 Logger::~Logger()
 {

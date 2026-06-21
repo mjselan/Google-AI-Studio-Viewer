@@ -5,11 +5,13 @@
 #include "SearchDialog.h"
 #include "app/AuthManager.h"
 #include "api/DriveApi.h"
+#include "api/CopilotApi.h"
 #include "api/ConversationModel.h"
 #include "models/Conversation.h"
 #include "app/Logger.h"
 #include <QMessageBox>
 #include <QVBoxLayout>
+#include <QHBoxLayout>
 #include <QInputDialog>
 #include <QApplication>
 #include <QFileInfo>
@@ -18,6 +20,7 @@ MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , m_auth(new AuthManager(this))
     , m_drive(new DriveApi(this))
+    , m_copilot(new CopilotApi(this))
     , m_convModel(new ConversationModel(this))
     , m_convPane(new ConversationListPane(this))
     , m_promptPane(new PromptListPane(this))
@@ -105,12 +108,42 @@ MainWindow::MainWindow(QWidget *parent)
             if (ok && !code.trimmed().isEmpty())
                 m_auth->submitAuthCode(code.trimmed());
         });
+
+    connect(m_copilot, &CopilotApi::connected, this, &MainWindow::onCopilotConnected);
+    connect(m_copilot, &CopilotApi::connectionFailed, this, [this](const QString &err)
+    {
+        statusBar()->showMessage("Local server connection failed: " + err);
+    });
+    connect(m_copilot, &CopilotApi::responseReceived, this, &MainWindow::onCopilotResponse);
+    connect(m_copilot, &CopilotApi::errorOccurred, this, &MainWindow::onCopilotError);
+
+    connect(m_sendButton, &QPushButton::clicked, this, &MainWindow::onSendPrompt);
+    connect(m_chatInput, &QLineEdit::returnPressed, this, &MainWindow::onSendPrompt);
 }
 
 MainWindow::~MainWindow() {}
 
 void MainWindow::setupUi()
 {
+    QWidget *centralWidget = new QWidget(this);
+    QVBoxLayout *mainLayout = new QVBoxLayout(centralWidget);
+    mainLayout->setContentsMargins(0, 0, 0, 0);
+    mainLayout->setSpacing(0);
+
+    m_chatBar = new QWidget(this);
+    QHBoxLayout *chatLayout = new QHBoxLayout(m_chatBar);
+    chatLayout->setContentsMargins(4, 2, 4, 2);
+    m_chatInput = new QLineEdit(this);
+    m_chatInput->setPlaceholderText("Type a message...");
+    m_chatInput->setMinimumHeight(28);
+    m_sendButton = new QPushButton("Send", this);
+    m_sendButton->setFixedWidth(60);
+    m_chatBar->setLayout(chatLayout);
+    chatLayout->addWidget(m_chatInput);
+    chatLayout->addWidget(m_sendButton);
+    m_chatBar->setVisible(false);
+    mainLayout->addWidget(m_chatBar);
+
     m_mainSplitter = new QSplitter(Qt::Horizontal, this);
     m_leftSplitter = new QSplitter(Qt::Vertical, this);
 
@@ -124,13 +157,23 @@ void MainWindow::setupUi()
     m_mainSplitter->setStretchFactor(0, 1);
     m_mainSplitter->setStretchFactor(1, 3);
 
-    setCentralWidget(m_mainSplitter);
+    mainLayout->addWidget(m_mainSplitter);
+
+    setCentralWidget(centralWidget);
 }
 
 void MainWindow::setupToolbar()
 {
     m_toolbar = addToolBar("Main");
     m_toolbar->setMovable(false);
+
+    m_backendCombo = new QComboBox(this);
+    m_backendCombo->addItems({"Google AI Studio", "Local Server (Copilot)"});
+    m_toolbar->addWidget(m_backendCombo);
+    connect(m_backendCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+        this, &MainWindow::onBackendChanged);
+
+    m_toolbar->addSeparator();
 
     m_signInAction = m_toolbar->addAction("Sign In with Google");
     connect(m_signInAction, &QAction::triggered, this, &MainWindow::onSignIn);
@@ -161,6 +204,164 @@ void MainWindow::setupToolbar()
 void MainWindow::setupStatusBar()
 {
     statusBar()->showMessage("Ready. Sign in to get started.");
+}
+
+void MainWindow::onBackendChanged(int index)
+{
+    if (index == 0)
+        switchToGoogleBackend();
+    else
+        switchToCopilotBackend();
+}
+
+void MainWindow::switchToGoogleBackend()
+{
+    Logger::instance().info("Switching to Google backend");
+    m_chatBar->setVisible(false);
+    m_signInAction->setVisible(!m_auth->isAuthenticated());
+    m_signOutAction->setVisible(m_auth->isAuthenticated());
+
+    m_convPane->clear();
+    m_promptPane->clear();
+    m_responsePane->clear();
+
+    if (m_auth->isAuthenticated())
+    {
+        m_drive->setAccessToken(m_auth->accessToken());
+        m_drive->findFolder("Google AI Studio");
+    }
+    else
+    {
+        statusBar()->showMessage("Ready. Sign in to get started.");
+    }
+}
+
+void MainWindow::switchToCopilotBackend()
+{
+    Logger::instance().info("Switching to Copilot backend");
+    m_signInAction->setVisible(false);
+    m_signOutAction->setVisible(false);
+    m_chatBar->setVisible(true);
+    m_chatInput->setFocus();
+
+    m_convPane->clear();
+    m_promptPane->clear();
+    m_responsePane->clear();
+
+    statusBar()->showMessage("Connecting to local server...");
+    m_copilot->fetchModels();
+}
+
+void MainWindow::onCopilotConnected(const QString &modelName)
+{
+    Logger::instance().info("Connected to Copilot. Model: " + modelName);
+    statusBar()->showMessage("Connected to local server. Model: " + modelName);
+
+    for (const auto &conv : m_localConversations)
+        m_convPane->addConversation(conv);
+}
+
+void MainWindow::onCopilotResponse(const QString &content, const QString &conversationId)
+{
+    Logger::instance().info(QString("Copilot response: %1 chars, convId=%2").arg(content.size()).arg(conversationId));
+    m_waitingForResponse = false;
+    m_chatInput->setEnabled(true);
+    m_sendButton->setEnabled(true);
+
+    if (!conversationId.isEmpty())
+        m_currentConversationId = conversationId;
+
+    addCopilotMessage("model", content);
+
+    if (m_currentLocalConvIndex >= 0)
+    {
+        auto &conv = m_localConversations[m_currentLocalConvIndex];
+        m_convPane->addConversation(conv);
+        m_promptPane->setConversation(conv);
+    }
+
+    statusBar()->showMessage("Response received.");
+}
+
+void MainWindow::onCopilotError(const QString &error)
+{
+    Logger::instance().error("Copilot error: " + error);
+    m_waitingForResponse = false;
+    m_chatInput->setEnabled(true);
+    m_sendButton->setEnabled(true);
+
+    if (m_currentLocalConvIndex >= 0)
+    {
+        auto &conv = m_localConversations[m_currentLocalConvIndex];
+        m_convPane->addConversation(conv);
+        m_promptPane->setConversation(conv);
+    }
+
+    statusBar()->showMessage("Error: " + error);
+}
+
+void MainWindow::onSendPrompt()
+{
+    QString text = m_chatInput->text().trimmed();
+    if (text.isEmpty() || m_waitingForResponse)
+    {
+        Logger::instance().debug("onSendPrompt: empty or waiting for response");
+        return;
+    }
+
+    Logger::instance().info("Sending prompt: " + text.left(80));
+    m_chatInput->clear();
+    m_chatInput->setEnabled(false);
+    m_sendButton->setEnabled(false);
+    m_waitingForResponse = true;
+
+    if (m_currentLocalConvIndex < 0)
+    {
+        Conversation conv;
+        conv.fileId = QString("local-%1").arg(QDateTime::currentMSecsSinceEpoch());
+        conv.fileName = text.left(80);
+        conv.model = "copilot";
+        m_localConversations.append(conv);
+        m_currentLocalConvIndex = m_localConversations.size() - 1;
+        m_convPane->addConversation(conv);
+    }
+
+    addCopilotMessage("user", text);
+
+    if (m_currentLocalConvIndex >= 0)
+    {
+        auto &conv = m_localConversations[m_currentLocalConvIndex];
+        m_convPane->addConversation(conv);
+        m_promptPane->setConversation(conv);
+    }
+
+    statusBar()->showMessage("Sending...");
+    m_copilot->sendMessage(text, m_currentConversationId);
+}
+
+void MainWindow::addCopilotMessage(const QString &role, const QString &text)
+{
+    if (m_currentLocalConvIndex < 0)
+        return;
+
+    auto &conv = m_localConversations[m_currentLocalConvIndex];
+
+    Message msg;
+    msg.text = text;
+    msg.role = role;
+    msg.createTime = QDateTime::currentDateTime();
+    conv.messages.append(msg);
+
+    if (role == "user")
+    {
+        Conversation::PromptResponsePair pair;
+        pair.prompt = msg;
+        conv.pairs.append(pair);
+    }
+    else if (!conv.pairs.isEmpty())
+    {
+        conv.pairs.last().responses.append(msg);
+    }
 }
 
 void MainWindow::onSignIn()
@@ -281,7 +482,6 @@ void MainWindow::onSearchTriggered()
 void MainWindow::onToggleThoughts(bool visible)
 {
     Q_UNUSED(visible)
-    // Refresh current view
     if (m_selectedConvIndex >= 0)
     {
         int promptIndex = m_promptPane->currentIndex();
@@ -299,4 +499,9 @@ void MainWindow::onSortChanged(int index)
     case 2: m_convPane->sortBy(ConversationListPane::AlphaAZ); break;
     case 3: m_convPane->sortBy(ConversationListPane::AlphaZA); break;
     }
+}
+
+void MainWindow::loadConversation(const QString &fileId, const QString &fileName)
+{
+    m_drive->downloadConversation(fileId, fileName);
 }

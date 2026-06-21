@@ -6,9 +6,15 @@
 #include <QStatusBar>
 #include <QAction>
 #include <QComboBox>
+#include <QLineEdit>
+#include <QPushButton>
+#include <QWidget>
+#include <QHBoxLayout>
+#include "models/Conversation.h"
 
 class AuthManager;
 class DriveApi;
+class CopilotApi;
 class ConversationModel;
 class ConversationListPane;
 class PromptListPane;
@@ -32,15 +38,24 @@ private slots:
     void onSearchTriggered();
     void onToggleThoughts(bool visible);
     void onSortChanged(int index);
+    void onBackendChanged(int index);
+    void onSendPrompt();
+    void onCopilotConnected(const QString &modelName);
+    void onCopilotResponse(const QString &content, const QString &conversationId);
+    void onCopilotError(const QString &error);
 
 private:
     void setupUi();
     void setupToolbar();
     void setupStatusBar();
     void loadConversation(const QString &fileId, const QString &fileName);
+    void switchToGoogleBackend();
+    void switchToCopilotBackend();
+    void addCopilotMessage(const QString &role, const QString &text);
 
     AuthManager *m_auth;
     DriveApi *m_drive;
+    CopilotApi *m_copilot;
     ConversationModel *m_convModel;
 
     ConversationListPane *m_convPane;
@@ -57,8 +72,18 @@ private:
     QAction *m_searchAction;
     QAction *m_toggleThoughts;
     QComboBox *m_sortCombo;
+    QComboBox *m_backendCombo;
+    QWidget *m_chatBar;
+    QLineEdit *m_chatInput;
+    QPushButton *m_sendButton;
 
     QString m_currentFolderId;
-    QList<QPair<QString, QString>> m_conversationFiles; // id, name
+    QList<QPair<QString, QString>> m_conversationFiles;
     int m_selectedConvIndex = -1;
+
+    // Local (Copilot) conversation state
+    QList<Conversation> m_localConversations;
+    int m_currentLocalConvIndex = -1;
+    QString m_currentConversationId;
+    bool m_waitingForResponse = false;
 };

@@ -23,12 +23,12 @@ if ($Target -ne "") {
 
 $cmds = @()
 if (-not $env:VSINSTALLDIR) {
-    $cmds += "`"$vcvars`" > nul"
+    $cmds += "`"$vcvars`""
 }
 $cmds += $cmakeConfigure
 $cmds += $cmakeBuild
 
-cmd /c ($cmds -join " && ")
+cmd /c ($cmds -join " && ") 2>&1
 if ($LASTEXITCODE -ne 0) {
     exit $LASTEXITCODE
 }

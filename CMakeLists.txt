@@ -16,6 +16,7 @@ set(SOURCES
     src/app/Logger.cpp
     src/app/AuthManager.cpp
     src/api/DriveApi.cpp
+    src/api/CopilotApi.cpp
     src/api/ConversationModel.cpp
     src/models/Conversation.cpp
     src/models/Message.cpp
@@ -34,6 +35,7 @@ set(HEADERS
     src/app/Logger.h
     src/app/AuthManager.h
     src/api/DriveApi.h
+    src/api/CopilotApi.h
     src/api/ConversationModel.h
     src/models/Conversation.h
     src/models/Message.h
