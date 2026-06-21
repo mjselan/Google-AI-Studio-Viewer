@@ -7,7 +7,7 @@ param(
 $vcvars = "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat"
 $cmakeGen = "Ninja"
 $ninja = "C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe"
-$qtPrefix = "C:/Qt/6.9.3/msvc2022_64"
+$qtPrefix = "C:/Qt/6.11.1/msvc2022_64"
 $buildDir = "build"
 
 if (-not (Test-Path "$buildDir/CMakeCache.txt")) {
@@ -21,11 +21,12 @@ if ($Target -ne "") {
     $cmakeBuild = "cmake --build $buildDir --target $Target"
 }
 
-$cmds = @(
-    "`"$vcvars`" > nul",
-    $cmakeConfigure,
-    $cmakeBuild
-)
+$cmds = @()
+if (-not $env:VSINSTALLDIR) {
+    $cmds += "`"$vcvars`" > nul"
+}
+$cmds += $cmakeConfigure
+$cmds += $cmakeBuild
 
 cmd /c ($cmds -join " && ")
 if ($LASTEXITCODE -ne 0) {

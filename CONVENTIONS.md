@@ -28,5 +28,11 @@ You are an expert C++20 and Qt6 software engineer. Follow these strict conventio
 
 ## 5. Output Format
 - DO NOT apologize or explain the code.
-- ONLY output the required code changes in the requested diff format.
+## Build Commands
+
+## 6. CLI (from pwsh or cmd)
+```cmd
+call "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat"
+cmake --preset debug
+cmake --build --preset debug
 --- END OF FILE CONVENTIONS.md ---
