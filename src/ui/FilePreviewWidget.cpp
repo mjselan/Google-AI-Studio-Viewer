@@ -42,7 +42,7 @@ FilePreviewWidget::FilePreviewWidget(const QString &fileId, QWidget *parent)
     layout->addWidget(m_imageToolbar);
 
     m_textView->setReadOnly(true);
-    m_textView->setFont(QFont("Consolas", 10));
+    m_textView->setFont(QFont("monospace", 10));
     m_textView->setMaximumHeight(300);
 
     m_imageView->setAlignment(Qt::AlignCenter);

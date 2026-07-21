@@ -15,6 +15,7 @@
 #include <QInputDialog>
 #include <QApplication>
 #include <QFileInfo>
+#include <QStandardPaths>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -366,8 +367,8 @@ void MainWindow::addCopilotMessage(const QString &role, const QString &text)
 
 void MainWindow::onSignIn()
 {
-    QString userProfilePath = qEnvironmentVariable("USERPROFILE");
-    QString configPath = userProfilePath + "\\Documents\\AI\\oauth_config.json";
+    QString userProfilePath = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    QString configPath = userProfilePath + "/AI/oauth_config.json";
 
     m_auth->loadConfig(configPath);
     if (!m_auth->isAuthenticated())
