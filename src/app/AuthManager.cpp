@@ -1,5 +1,6 @@
 #include "AuthManager.h"
 #include "Application.h"
+#include "app/Logger.h"
 #include <QDesktopServices>
 #include <QJsonDocument>
 #include <QJsonArray>
@@ -22,6 +23,8 @@ bool AuthManager::isAuthenticated() const
 }
 
 QString AuthManager::accessToken() const { return m_accessToken; }
+
+int AuthManager::expiresIn() const { return m_expiresIn; }
 
 void AuthManager::loadConfig(const QString &configPath)
 {
@@ -50,13 +53,49 @@ void AuthManager::loadConfig(const QString &configPath)
 
     m_scopes << "https://www.googleapis.com/auth/drive.readonly";
 
+    loadSavedTokens();
+}
+
+void AuthManager::setCredentials(const QString &clientId, const QString &clientSecret)
+{
+    m_clientId = clientId;
+    m_clientSecret = clientSecret;
+    m_redirectUri = "urn:ietf:wg:oauth:2.0:oob";
+    m_scopes << "https://www.googleapis.com/auth/drive.readonly";
+
+    loadSavedTokens();
+}
+
+void AuthManager::loadSavedTokens()
+{
     auto *app = qobject_cast<Application *>(qApp);
-    if (app)
+    if (!app)
+        return;
+
+    QSettings &s = app->settings();
+    m_refreshToken = s.value("auth/refresh_token").toString();
+    m_accessToken = s.value("auth/access_token").toString();
+    m_expiresIn = s.value("auth/expires_in").toInt();
+
+    QString acquiredStr = s.value("auth/token_acquired_at").toString();
+    if (!acquiredStr.isEmpty())
+        m_tokenAcquiredAt = QDateTime::fromString(acquiredStr, Qt::ISODate);
+
+    if (!m_accessToken.isEmpty() && m_tokenAcquiredAt.isValid())
     {
-        QSettings &s = app->settings();
-        m_refreshToken = s.value("auth/refresh_token").toString();
-        if (!m_refreshToken.isEmpty())
-            refreshAccessToken();
+        qint64 elapsedSec = m_tokenAcquiredAt.secsTo(QDateTime::currentDateTimeUtc());
+        int remainingSec = m_expiresIn - static_cast<int>(elapsedSec);
+        if (remainingSec > 60)
+        {
+            Logger::instance().info(
+                QString("[AuthManager] Restored access token, expires in %1 sec")
+                    .arg(remainingSec));
+        }
+        else
+        {
+            Logger::instance().info("[AuthManager] Saved access token expired, refreshing...");
+            m_accessToken.clear();
+        }
     }
 }
 
@@ -65,6 +104,22 @@ void AuthManager::authenticate()
     if (m_clientId.isEmpty())
     {
         emit authFailed("Client ID not configured. Edit config/oauth_config.json");
+        return;
+    }
+
+    // If we already have a valid access token, nothing to do
+    if (!m_accessToken.isEmpty())
+    {
+        int remainingSec = m_expiresIn;
+        if (m_tokenAcquiredAt.isValid())
+        {
+            qint64 elapsedSec = m_tokenAcquiredAt.secsTo(QDateTime::currentDateTimeUtc());
+            remainingSec = m_expiresIn - static_cast<int>(elapsedSec);
+        }
+        int hours = remainingSec / 3600;
+        int mins = (remainingSec % 3600) / 60;
+        emit authSuccess(
+            QString("Authenticated. Token expires in %1h %2m.").arg(hours).arg(mins));
         return;
     }
 
@@ -94,9 +149,12 @@ void AuthManager::refreshAccessToken()
         return;
     }
 
+    Logger::instance().info("[AuthManager] Refreshing access token...");
+
     QUrl url("https://oauth2.googleapis.com/token");
     QNetworkRequest req(url);
     req.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
+    req.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
 
     QUrlQuery body;
     body.addQueryItem("client_id", m_clientId);
@@ -108,20 +166,33 @@ void AuthManager::refreshAccessToken()
     connect(reply, &QNetworkReply::finished, this, [this, reply]()
             {
                 reply->deleteLater();
+                auto responseBody = reply->readAll();
                 if (reply->error() != QNetworkReply::NoError)
                 {
                     // If the refresh token is invalid or expired, clear it so the
                     // user can start from scratch next time.
                     signOut();
-                    emit authFailed("Token refresh failed: " + reply->errorString());
+                    QString errMsg = "Token refresh failed: " + reply->errorString();
+                    auto doc = QJsonDocument::fromJson(responseBody);
+                    if (!doc.isNull() && doc.object().contains("error"))
+                        errMsg += "\n" + doc.object()["error_description"].toString();
+                    Logger::instance().error("[AuthManager] " + errMsg);
+                    emit authFailed(errMsg);
                     return;
                 }
-                auto doc = QJsonDocument::fromJson(reply->readAll());
+                auto doc = QJsonDocument::fromJson(responseBody);
                 auto obj = doc.object();
-                m_accessToken = obj["access_token"].toString();
-                m_expiresIn = obj["expires_in"].toInt();
+                QString access = obj["access_token"].toString();
+                int expiresIn = obj["expires_in"].toInt();
+                storeTokens(access, QString(), expiresIn);
+                int hours = expiresIn / 3600;
+                int mins = (expiresIn % 3600) / 60;
+                Logger::instance().info(
+                    QString("[AuthManager] Token refreshed, expires in %1h %2m")
+                        .arg(hours).arg(mins));
                 emit tokenRefreshed();
-                emit authSuccess(); // Let the app know that authentication via refresh succeeded
+                emit authSuccess(
+                    QString("Token refreshed. Expires in %1h %2m.").arg(hours).arg(mins));
             });
 }
 
@@ -129,11 +200,16 @@ void AuthManager::signOut()
 {
     m_accessToken.clear();
     m_refreshToken.clear();
+    m_expiresIn = 0;
+    m_tokenAcquiredAt = QDateTime();
     auto *app = qobject_cast<Application *>(qApp);
     if (app)
     {
         QSettings &s = app->settings();
         s.remove("auth/refresh_token");
+        s.remove("auth/access_token");
+        s.remove("auth/expires_in");
+        s.remove("auth/token_acquired_at");
         s.sync();
     }
 }
@@ -143,6 +219,7 @@ void AuthManager::exchangeCodeForTokens(const QString &code)
     QUrl url("https://oauth2.googleapis.com/token");
     QNetworkRequest req(url);
     req.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
+    req.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
 
     QUrlQuery body;
     body.addQueryItem("code", code);
@@ -155,18 +232,30 @@ void AuthManager::exchangeCodeForTokens(const QString &code)
     connect(reply, &QNetworkReply::finished, this, [this, reply]()
     {
         reply->deleteLater();
+        auto responseBody = reply->readAll();
         if (reply->error() != QNetworkReply::NoError)
         {
-            emit authFailed("Token exchange failed: " + reply->errorString());
+            QString errMsg = "Token exchange failed: " + reply->errorString();
+            auto doc = QJsonDocument::fromJson(responseBody);
+            if (!doc.isNull() && doc.object().contains("error"))
+                errMsg += "\n" + doc.object()["error_description"].toString();
+            Logger::instance().error("[AuthManager] " + errMsg);
+            emit authFailed(errMsg);
             return;
         }
-        auto doc = QJsonDocument::fromJson(reply->readAll());
+        auto doc = QJsonDocument::fromJson(responseBody);
         auto obj = doc.object();
         QString access = obj["access_token"].toString();
         QString refresh = obj["refresh_token"].toString();
         int expiresIn = obj["expires_in"].toInt();
         storeTokens(access, refresh, expiresIn);
-        emit authSuccess();
+        int hours = expiresIn / 3600;
+        int mins = (expiresIn % 3600) / 60;
+        Logger::instance().info(
+            QString("[AuthManager] Tokens obtained, expires in %1h %2m hasRefresh=%3")
+                .arg(hours).arg(mins).arg(!refresh.isEmpty()));
+        emit authSuccess(
+            QString("Authenticated. Token expires in %1h %2m.").arg(hours).arg(mins));
     });
 }
 
@@ -174,16 +263,22 @@ void AuthManager::storeTokens(const QString &access, const QString &refresh, int
 {
     m_accessToken = access;
     m_expiresIn = expiresIn;
+    m_tokenAcquiredAt = QDateTime::currentDateTimeUtc();
+
     if (!refresh.isEmpty())
-    {
         m_refreshToken = refresh;
-        auto *app = qobject_cast<Application *>(qApp);
-        if (app)
-        {
-            QSettings &s = app->settings();
-            s.setValue("auth/refresh_token", refresh);
-            s.sync();
-        }
+
+    // Always persist tokens
+    auto *app = qobject_cast<Application *>(qApp);
+    if (app)
+    {
+        QSettings &s = app->settings();
+        s.setValue("auth/access_token", m_accessToken);
+        s.setValue("auth/expires_in", m_expiresIn);
+        s.setValue("auth/token_acquired_at", m_tokenAcquiredAt.toString(Qt::ISODate));
+        if (!refresh.isEmpty())
+            s.setValue("auth/refresh_token", m_refreshToken);
+        s.sync();
     }
 }
 

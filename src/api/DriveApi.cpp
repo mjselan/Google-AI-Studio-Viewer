@@ -22,6 +22,7 @@ void DriveApi::sendGet(const QString &urlStr, std::function<void(const QJsonObje
     QUrl qurl(urlStr);
     QNetworkRequest req(qurl);
     req.setRawHeader("Authorization", ("Bearer " + m_token).toUtf8());
+    req.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
 
     auto *reply = m_net->get(req);
     handleReply(reply, callback);
@@ -117,6 +118,7 @@ void DriveApi::downloadConversation(const QString &fileId, const QString &fileNa
     QUrl url(QString("https://www.googleapis.com/drive/v3/files/%1?alt=media").arg(fileId));
     QNetworkRequest req(url);
     req.setRawHeader("Authorization", ("Bearer " + m_token).toUtf8());
+    req.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
 
     auto *reply = m_net->get(req);
     connect(reply, &QNetworkReply::finished, this, [this, reply, fileId, fileName]()
@@ -160,6 +162,7 @@ void DriveApi::downloadAttachment(const QString &fileId)
     QUrl url(QString("https://www.googleapis.com/drive/v3/files/%1?alt=media").arg(fileId));
     QNetworkRequest req(url);
     req.setRawHeader("Authorization", ("Bearer " + m_token).toUtf8());
+    req.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
 
     auto *reply = m_net->get(req);
     connect(reply, &QNetworkReply::finished, this, [this, reply, fileId]()

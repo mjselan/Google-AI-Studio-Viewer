@@ -4,6 +4,7 @@
 #include <QString>
 #include <QJsonObject>
 #include <QNetworkAccessManager>
+#include <QDateTime>
 
 class AuthManager : public QObject
 {
@@ -13,15 +14,17 @@ public:
 
     bool isAuthenticated() const;
     QString accessToken() const;
+    int expiresIn() const;
 
     void loadConfig(const QString &configPath);
+    void setCredentials(const QString &clientId, const QString &clientSecret);
     void authenticate();
     void refreshAccessToken();
     void signOut();
     void submitAuthCode(const QString &code);
 
 signals:
-    void authSuccess();
+    void authSuccess(const QString &message);
     void authFailed(const QString &error);
     void tokenRefreshed();
     void authCodeRequired(const QString &authUrl);
@@ -29,6 +32,7 @@ signals:
 private:
     void exchangeCodeForTokens(const QString &code);
     void storeTokens(const QString &access, const QString &refresh, int expiresIn);
+    void loadSavedTokens();
     QString buildAuthUrl() const;
 
     QNetworkAccessManager *m_net;
@@ -41,4 +45,5 @@ private:
     QString m_accessToken;
     QString m_refreshToken;
     int m_expiresIn = 0;
+    QDateTime m_tokenAcquiredAt;
 };

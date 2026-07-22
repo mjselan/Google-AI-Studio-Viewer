@@ -8,6 +8,7 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QTextDocument>
+#include <QScrollBar>
 #include <QRegularExpression>
 
 // Convert Google AI markdown to clean HTML for QTextBrowser
@@ -100,6 +101,8 @@ void ResponsePane::showResponse(const Conversation::PromptResponsePair &pair,
 
     if (pair.responses.isEmpty())
         m_browser->append("<p><i>No response yet.</i></p>");
+
+    m_browser->verticalScrollBar()->setValue(0);
 }
 
 void ResponsePane::appendModelResponse(const QString &text, bool isThought, bool showThoughts)

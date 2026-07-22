@@ -16,6 +16,10 @@
 #include <QApplication>
 #include <QFileInfo>
 #include <QStandardPaths>
+#include <QDir>
+#include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -32,14 +36,14 @@ MainWindow::MainWindow(QWidget *parent)
     setupToolbar();
     setupStatusBar();
 
-    connect(m_auth, &AuthManager::authSuccess, this, [this]()
+    connect(m_auth, &AuthManager::authSuccess, this, [this](const QString &message)
     {
-        Logger::instance().info("Auth success");
+        Logger::instance().info("Auth success: " + message);
         m_drive->setAccessToken(m_auth->accessToken());
         m_drive->findFolder("Google AI Studio");
         m_signInAction->setVisible(false);
         m_signOutAction->setVisible(true);
-        statusBar()->showMessage("Authenticated. Locating conversations...");
+        statusBar()->showMessage(message);
     });
 
     connect(m_auth, &AuthManager::authFailed, this, [this](const QString &err)
@@ -370,7 +374,42 @@ void MainWindow::onSignIn()
     QString userProfilePath = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
     QString configPath = userProfilePath + "/AI/oauth_config.json";
 
-    m_auth->loadConfig(configPath);
+    if (QFileInfo::exists(configPath))
+    {
+        m_auth->loadConfig(configPath);
+    }
+    else
+    {
+        bool ok;
+        QString clientId = QInputDialog::getText(this, "Google API Credentials",
+            "oauth_config.json not found at:\n" + configPath + "\n\n"
+            "Enter your Google Drive Client ID:",
+            QLineEdit::Normal, QString(), &ok);
+        if (!ok || clientId.trimmed().isEmpty())
+            return;
+
+        QString clientSecret = QInputDialog::getText(this, "Google API Credentials",
+            "Enter your Google Drive Client Secret:",
+            QLineEdit::Password, QString(), &ok);
+        if (!ok || clientSecret.trimmed().isEmpty())
+            return;
+
+        m_auth->setCredentials(clientId.trimmed(), clientSecret.trimmed());
+
+        QDir().mkpath(QFileInfo(configPath).absolutePath());
+        QFile f(configPath);
+        if (f.open(QIODevice::WriteOnly))
+        {
+            QJsonObject installed;
+            installed["client_id"] = clientId.trimmed();
+            installed["client_secret"] = clientSecret.trimmed();
+            QJsonObject root;
+            root["installed"] = installed;
+            f.write(QJsonDocument(root).toJson());
+            f.close();
+        }
+    }
+
     if (!m_auth->isAuthenticated())
         m_auth->authenticate();
     else

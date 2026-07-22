@@ -73,9 +73,11 @@ void ConversationModel::buildPairs(Conversation &conv) const
         {
             if (hasPrompt)
             {
-                Conversation::PromptResponsePair pair;
-                pair.prompt = currentPrompt;
-                conv.pairs.append(pair);
+                Logger::instance().debug(
+                    QString("[buildPairs] Consecutive user message at %1, "
+                            "previous prompt at %2 has no response yet — replacing")
+                        .arg(msg.createTime.toString(Qt::ISODate))
+                        .arg(currentPrompt.createTime.toString(Qt::ISODate)));
             }
             currentPrompt = msg;
             hasPrompt = true;
@@ -85,6 +87,11 @@ void ConversationModel::buildPairs(Conversation &conv) const
             if (conv.pairs.isEmpty() ||
                 conv.pairs.last().prompt.createTime != currentPrompt.createTime)
             {
+                Logger::instance().debug(
+                    QString("[buildPairs] New pair: prompt at %1, model at %2 text='%3'")
+                        .arg(currentPrompt.createTime.toString(Qt::ISODate))
+                        .arg(msg.createTime.toString(Qt::ISODate))
+                        .arg(msg.text.left(60)));
                 Conversation::PromptResponsePair pair;
                 pair.prompt = currentPrompt;
                 pair.responses.append(msg);
@@ -92,6 +99,10 @@ void ConversationModel::buildPairs(Conversation &conv) const
             }
             else
             {
+                Logger::instance().debug(
+                    QString("[buildPairs] Appending response to pair %1 (model at %2)")
+                        .arg(conv.pairs.size() - 1)
+                        .arg(msg.createTime.toString(Qt::ISODate)));
                 conv.pairs.last().responses.append(msg);
             }
         }
@@ -111,9 +122,16 @@ void ConversationModel::buildPairs(Conversation &conv) const
         }
         if (!found)
         {
+            Logger::instance().debug(
+                QString("[buildPairs] Final prompt at %1 has no response — adding empty pair")
+                    .arg(currentPrompt.createTime.toString(Qt::ISODate)));
             Conversation::PromptResponsePair pair;
             pair.prompt = currentPrompt;
             conv.pairs.append(pair);
         }
     }
+
+    Logger::instance().info(
+        QString("[buildPairs] '%1': %2 pairs built from %3 messages")
+            .arg(conv.fileName).arg(conv.pairs.size()).arg(conv.messages.size()));
 }
