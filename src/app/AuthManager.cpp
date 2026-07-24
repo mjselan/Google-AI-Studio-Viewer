@@ -1,6 +1,5 @@
 #include "AuthManager.h"
 #include "Application.h"
-#include "app/Logger.h"
 #include <QDesktopServices>
 #include <QJsonDocument>
 #include <QJsonArray>
@@ -85,15 +84,8 @@ void AuthManager::loadSavedTokens()
     {
         qint64 elapsedSec = m_tokenAcquiredAt.secsTo(QDateTime::currentDateTimeUtc());
         int remainingSec = m_expiresIn - static_cast<int>(elapsedSec);
-        if (remainingSec > 60)
+        if (remainingSec <= 60)
         {
-            Logger::instance().info(
-                QString("[AuthManager] Restored access token, expires in %1 sec")
-                    .arg(remainingSec));
-        }
-        else
-        {
-            Logger::instance().info("[AuthManager] Saved access token expired, refreshing...");
             m_accessToken.clear();
         }
     }
@@ -149,8 +141,6 @@ void AuthManager::refreshAccessToken()
         return;
     }
 
-    Logger::instance().info("[AuthManager] Refreshing access token...");
-
     QUrl url("https://oauth2.googleapis.com/token");
     QNetworkRequest req(url);
     req.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
@@ -176,7 +166,6 @@ void AuthManager::refreshAccessToken()
                     auto doc = QJsonDocument::fromJson(responseBody);
                     if (!doc.isNull() && doc.object().contains("error"))
                         errMsg += "\n" + doc.object()["error_description"].toString();
-                    Logger::instance().error("[AuthManager] " + errMsg);
                     emit authFailed(errMsg);
                     return;
                 }
@@ -187,9 +176,6 @@ void AuthManager::refreshAccessToken()
                 storeTokens(access, QString(), expiresIn);
                 int hours = expiresIn / 3600;
                 int mins = (expiresIn % 3600) / 60;
-                Logger::instance().info(
-                    QString("[AuthManager] Token refreshed, expires in %1h %2m")
-                        .arg(hours).arg(mins));
                 emit tokenRefreshed();
                 emit authSuccess(
                     QString("Token refreshed. Expires in %1h %2m.").arg(hours).arg(mins));
@@ -239,7 +225,6 @@ void AuthManager::exchangeCodeForTokens(const QString &code)
             auto doc = QJsonDocument::fromJson(responseBody);
             if (!doc.isNull() && doc.object().contains("error"))
                 errMsg += "\n" + doc.object()["error_description"].toString();
-            Logger::instance().error("[AuthManager] " + errMsg);
             emit authFailed(errMsg);
             return;
         }
@@ -251,9 +236,6 @@ void AuthManager::exchangeCodeForTokens(const QString &code)
         storeTokens(access, refresh, expiresIn);
         int hours = expiresIn / 3600;
         int mins = (expiresIn % 3600) / 60;
-        Logger::instance().info(
-            QString("[AuthManager] Tokens obtained, expires in %1h %2m hasRefresh=%3")
-                .arg(hours).arg(mins).arg(!refresh.isEmpty()));
         emit authSuccess(
             QString("Authenticated. Token expires in %1h %2m.").arg(hours).arg(mins));
     });

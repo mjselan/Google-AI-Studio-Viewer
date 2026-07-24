@@ -1,5 +1,4 @@
 #include "ConversationListPane.h"
-#include "app/Logger.h"
 #include <QVBoxLayout>
 #include <QLabel>
 #include <algorithm>
@@ -20,17 +19,7 @@ ConversationListPane::ConversationListPane(QWidget *parent)
         if (row >= 0 && row < m_rowToConv.size())
         {
             int convIndex = m_rowToConv[row];
-            Logger::instance().info(
-                QString("Conversation selected: visual row=%1 convIndex=%2 name='%3'")
-                    .arg(row).arg(convIndex)
-                    .arg(m_conversations.value(convIndex).fileName));
             emit conversationSelected(convIndex);
-        }
-        else
-        {
-            Logger::instance().warn(
-                QString("Conversation selection out of range: row=%1 mapping size=%2")
-                    .arg(row).arg(m_rowToConv.size()));
         }
     });
 }
@@ -43,7 +32,6 @@ bool ConversationListPane::isValidConv(const Conversation &conv) const
 void ConversationListPane::setFileList(const QList<QPair<QString, QString>> &files)
 {
     m_fileList = files;
-    Logger::instance().info(QString("File list set: %1 files").arg(files.size()));
 }
 
 void ConversationListPane::addConversation(const Conversation &conv)
@@ -52,20 +40,12 @@ void ConversationListPane::addConversation(const Conversation &conv)
     {
         if (existing.fileId == conv.fileId)
         {
-            Logger::instance().debug(
-                QString("Skipping duplicate conversation: '%1' (%2)")
-                    .arg(conv.fileName, conv.fileId));
             return;
         }
     }
 
     m_conversations.append(conv);
     m_filesPopulated++;
-    Logger::instance().debug(
-        QString("Conversation added: '%1' model='%2' tokens=%3 pairs=%4")
-            .arg(conv.fileName, conv.model)
-            .arg(conv.totalTokenCount())
-            .arg(conv.pairs.size()));
     refreshList();
 }
 
@@ -76,7 +56,6 @@ void ConversationListPane::clear()
     m_fileList.clear();
     m_list->clear();
     m_filesPopulated = 0;
-    Logger::instance().info("Conversation list cleared");
 }
 
 int ConversationListPane::conversationCount() const
@@ -109,9 +88,6 @@ void ConversationListPane::refreshList()
 
         if (!isValidConv(conv))
         {
-            Logger::instance().debug(
-                QString("Skipping empty conversation at index %1: '%2'")
-                    .arg(i).arg(conv.fileName));
             continue;
         }
 
@@ -132,10 +108,6 @@ void ConversationListPane::refreshList()
         item->setToolTip(conv.fileName);
         m_list->addItem(item);
     }
-
-    Logger::instance().debug(
-        QString("List rendered: %1 visible of %2 total conversations")
-            .arg(m_rowToConv.size()).arg(m_conversations.size()));
 
     m_list->blockSignals(false);
 }
@@ -178,7 +150,6 @@ void ConversationListPane::applySort()
 void ConversationListPane::sortBy(SortMode mode)
 {
     m_sortMode = mode;
-    Logger::instance().info(QString("Sorting conversations: mode=%1").arg(static_cast<int>(mode)));
     applySort();
     refreshList();
 }

@@ -26,9 +26,6 @@ Conversation ConversationModel::parseConversation(const QString &fileId,
 
     // Parse chunks
     QJsonArray chunks = root["chunkedPrompt"].toObject()["chunks"].toArray();
-    Logger::instance().debug(
-        QString("[ConversationModel] '%1': %2 chunks, %3 pairs (before build)")
-            .arg(fileName).arg(chunks.size()).arg(conv.pairs.size()));
     for (const auto &chunk : chunks)
         conv.messages.append(Message::fromJson(chunk.toObject()));
 
@@ -43,20 +40,20 @@ Conversation ConversationModel::parseConversation(const QString &fileId,
             return false;
         });
 
-    Logger::instance().info(
-        QString("[ConversationModel] '%1' parsed: %2 messages")
-            .arg(fileName).arg(conv.messages.size()));
-
     buildPairs(conv);
 
-    // Log pairs with driveDocumentIds
-    for (int i = 0; i < conv.pairs.size(); ++i)
+    // Log message order for attachment debugging
+    for (int i = 0; i < conv.messages.size(); ++i)
     {
-        const auto &p = conv.pairs[i];
-        if (!p.prompt.driveDocumentId.isEmpty())
+        const auto &m = conv.messages[i];
+        if (!m.driveDocumentId.isEmpty() || m.role == "user")
             Logger::instance().info(
-                QString("[ConversationModel] Pair %1 has driveDocumentId='%2'")
-                    .arg(i).arg(p.prompt.driveDocumentId));
+                QString("[Attachment] Msg[%1] role='%2' doc='%3' text='%4' time=%5")
+                    .arg(i)
+                    .arg(m.role)
+                    .arg(m.driveDocumentId)
+                    .arg(m.text.left(40))
+                    .arg(m.createTime.toString(Qt::ISODate)));
     }
 
     return conv;
@@ -71,15 +68,60 @@ void ConversationModel::buildPairs(Conversation &conv) const
     {
         if (msg.role == "user")
         {
-            if (hasPrompt)
+            if (hasPrompt && msg.createTime == currentPrompt.createTime)
             {
-                Logger::instance().debug(
-                    QString("[buildPairs] Consecutive user message at %1, "
-                            "previous prompt at %2 has no response yet — replacing")
+                // Same timestamp — merge: combine driveDocumentId and text
+                bool currentHasDoc = !currentPrompt.driveDocumentId.isEmpty();
+                bool newHasDoc = !msg.driveDocumentId.isEmpty();
+                bool currentHasText = !currentPrompt.text.isEmpty();
+                bool newHasText = !msg.text.isEmpty();
+
+                Logger::instance().info(
+                    QString("[Attachment] Merge check at %1: "
+                            "current(doc='%2' text=%3) new(doc='%4' text=%5)")
                         .arg(msg.createTime.toString(Qt::ISODate))
-                        .arg(currentPrompt.createTime.toString(Qt::ISODate)));
+                        .arg(currentPrompt.driveDocumentId)
+                        .arg(currentHasText)
+                        .arg(msg.driveDocumentId)
+                        .arg(newHasText));
+
+                // Prefer the message that has text as the base
+                if (newHasText && !currentHasText)
+                {
+                    QString docId = currentPrompt.driveDocumentId;
+                    currentPrompt = msg;
+                    if (currentPrompt.driveDocumentId.isEmpty())
+                        currentPrompt.driveDocumentId = docId;
+                    Logger::instance().info(
+                        QString("[Attachment] Merged doc-only into text prompt: docId='%1' text='%2'")
+                            .arg(currentPrompt.driveDocumentId)
+                            .arg(currentPrompt.text.left(60)));
+                }
+                else if (currentHasText && !newHasText)
+                {
+                    if (currentPrompt.driveDocumentId.isEmpty())
+                        currentPrompt.driveDocumentId = msg.driveDocumentId;
+                    Logger::instance().info(
+                        QString("[Attachment] Merged doc into text prompt: docId='%1' text='%2'")
+                            .arg(currentPrompt.driveDocumentId)
+                            .arg(currentPrompt.text.left(60)));
+                }
+                else if (!currentHasText && !newHasText)
+                {
+                    // Both doc-only — keep whichever has the driveDocumentId
+                    if (currentPrompt.driveDocumentId.isEmpty())
+                        currentPrompt.driveDocumentId = msg.driveDocumentId;
+                }
+                // else: both have text — keep current (first one wins)
             }
-            currentPrompt = msg;
+            else if (hasPrompt)
+            {
+                currentPrompt = msg;
+            }
+            else
+            {
+                currentPrompt = msg;
+            }
             hasPrompt = true;
         }
         else if (msg.role == "model" && hasPrompt)
@@ -87,22 +129,19 @@ void ConversationModel::buildPairs(Conversation &conv) const
             if (conv.pairs.isEmpty() ||
                 conv.pairs.last().prompt.createTime != currentPrompt.createTime)
             {
-                Logger::instance().debug(
-                    QString("[buildPairs] New pair: prompt at %1, model at %2 text='%3'")
-                        .arg(currentPrompt.createTime.toString(Qt::ISODate))
-                        .arg(msg.createTime.toString(Qt::ISODate))
-                        .arg(msg.text.left(60)));
                 Conversation::PromptResponsePair pair;
                 pair.prompt = currentPrompt;
                 pair.responses.append(msg);
                 conv.pairs.append(pair);
+                if (!pair.prompt.driveDocumentId.isEmpty())
+                    Logger::instance().info(
+                        QString("[Attachment] Pair %1 created with docId='%2' text='%3'")
+                            .arg(conv.pairs.size() - 1)
+                            .arg(pair.prompt.driveDocumentId)
+                            .arg(pair.prompt.text.left(60)));
             }
             else
             {
-                Logger::instance().debug(
-                    QString("[buildPairs] Appending response to pair %1 (model at %2)")
-                        .arg(conv.pairs.size() - 1)
-                        .arg(msg.createTime.toString(Qt::ISODate)));
                 conv.pairs.last().responses.append(msg);
             }
         }
@@ -122,16 +161,14 @@ void ConversationModel::buildPairs(Conversation &conv) const
         }
         if (!found)
         {
-            Logger::instance().debug(
-                QString("[buildPairs] Final prompt at %1 has no response — adding empty pair")
-                    .arg(currentPrompt.createTime.toString(Qt::ISODate)));
             Conversation::PromptResponsePair pair;
             pair.prompt = currentPrompt;
             conv.pairs.append(pair);
+            if (!pair.prompt.driveDocumentId.isEmpty())
+                Logger::instance().info(
+                    QString("[Attachment] Final pair %1 (no response) with docId='%2'")
+                        .arg(conv.pairs.size() - 1)
+                        .arg(pair.prompt.driveDocumentId));
         }
     }
-
-    Logger::instance().info(
-        QString("[buildPairs] '%1': %2 pairs built from %3 messages")
-            .arg(conv.fileName).arg(conv.pairs.size()).arg(conv.messages.size()));
 }

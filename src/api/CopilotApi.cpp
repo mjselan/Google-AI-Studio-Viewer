@@ -1,5 +1,4 @@
 #include "CopilotApi.h"
-#include "app/Logger.h"
 #include <QJsonDocument>
 #include <QJsonArray>
 #include <QJsonObject>
@@ -34,7 +33,6 @@ void CopilotApi::fetchModels()
         if (reply->error() != QNetworkReply::NoError)
         {
             QString errMsg = reply->errorString();
-            Logger::instance().error("Copilot API models fetch failed: " + errMsg);
             emit connectionFailed(errMsg);
             return;
         }
@@ -42,7 +40,6 @@ void CopilotApi::fetchModels()
         if (!data.isEmpty())
         {
             m_modelName = data.first().toObject()["id"].toString();
-            Logger::instance().info("Copilot API connected. Model: " + m_modelName);
             emit connected(m_modelName);
         }
         else
@@ -88,7 +85,6 @@ void CopilotApi::sendMessage(const QString &prompt, const QString &conversationI
             else
                 errMsg = reply->errorString();
 
-            Logger::instance().error("Copilot API chat failed: " + errMsg);
             emit errorOccurred(errMsg);
             return;
         }
@@ -96,7 +92,6 @@ void CopilotApi::sendMessage(const QString &prompt, const QString &conversationI
         if (root.contains("error"))
         {
             QString errMsg = root["error"].toObject()["message"].toString();
-            Logger::instance().error("Copilot API error: " + errMsg);
             emit errorOccurred(errMsg);
             return;
         }
@@ -104,10 +99,6 @@ void CopilotApi::sendMessage(const QString &prompt, const QString &conversationI
         QString content = root["choices"].toArray()
             .first().toObject()["message"].toObject()["content"].toString();
         QString convId = root["conversation_id"].toString();
-
-        Logger::instance().info(
-            QString("Copilot API response: %1 chars, convId=%2")
-                .arg(content.size()).arg(convId));
 
         emit responseReceived(content, convId);
     });

@@ -38,9 +38,6 @@ void DriveApi::handleReply(QNetworkReply *reply, std::function<void(const QJsonO
 
         if (status == 401)
         {
-            Logger::instance().warn(
-                QString("HTTP 401 on %1 — queuing for token refresh")
-                    .arg(reply->url().toString()));
             PendingRequest pending;
             pending.url = reply->url().toString();
             pending.callback = callback;
@@ -63,7 +60,6 @@ void DriveApi::handleReply(QNetworkReply *reply, std::function<void(const QJsonO
 void DriveApi::retryPendingRequests()
 {
     int count = m_pendingRequests.size();
-    Logger::instance().info(QString("Retrying %1 pending requests with new token").arg(count));
     QList<PendingRequest> retries = m_pendingRequests;
     m_pendingRequests.clear();
     for (const auto &pending : retries)
@@ -128,9 +124,6 @@ void DriveApi::downloadConversation(const QString &fileId, const QString &fileNa
         int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         if (status == 401)
         {
-            Logger::instance().warn(
-                QString("HTTP 401 downloading '%1' (%2) — queuing for retry")
-                    .arg(fileName).arg(fileId));
             PendingRequest pending;
             pending.url = reply->url().toString();
             pending.callback = [this, fileId, fileName](const QJsonObject &data)
@@ -144,21 +137,18 @@ void DriveApi::downloadConversation(const QString &fileId, const QString &fileNa
 
         if (reply->error() != QNetworkReply::NoError)
         {
-            Logger::instance().error(
-                QString("Download failed: '%1' (%2) — %3")
-                    .arg(fileName, fileId, reply->errorString()));
             emit apiError("Download failed: " + reply->errorString());
             return;
         }
         auto doc = QJsonDocument::fromJson(reply->readAll());
-        Logger::instance().debug(
-            QString("Downloaded conversation: '%1' (%2)").arg(fileName, fileId));
         emit conversationDownloaded(fileId, fileName, doc.object());
     });
 }
 
 void DriveApi::downloadAttachment(const QString &fileId)
 {
+    Logger::instance().info(
+        QString("[Attachment] downloadAttachment: fileId='%1'").arg(fileId));
     QUrl url(QString("https://www.googleapis.com/drive/v3/files/%1?alt=media").arg(fileId));
     QNetworkRequest req(url);
     req.setRawHeader("Authorization", ("Bearer " + m_token).toUtf8());
@@ -172,8 +162,6 @@ void DriveApi::downloadAttachment(const QString &fileId)
         int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
         if (status == 401)
         {
-            Logger::instance().warn(
-                QString("HTTP 401 downloading attachment %1 — queuing for retry").arg(fileId));
             PendingRequest pending;
             pending.url = reply->url().toString();
             pending.callback = [this, fileId](const QJsonObject &)
@@ -188,15 +176,15 @@ void DriveApi::downloadAttachment(const QString &fileId)
         if (reply->error() != QNetworkReply::NoError)
         {
             Logger::instance().error(
-                QString("Attachment download failed: %1 — %2")
+                QString("[Attachment] downloadAttachment failed: fileId='%1' error='%2'")
                     .arg(fileId, reply->errorString()));
             emit apiError("Attachment download failed: " + reply->errorString());
             return;
         }
         QString mime = reply->header(QNetworkRequest::ContentTypeHeader).toString();
         QByteArray data = reply->readAll();
-        Logger::instance().debug(
-            QString("Attachment downloaded: %1 (%2, %3 bytes)")
+        Logger::instance().info(
+            QString("[Attachment] downloadAttachment OK: fileId='%1' mime='%2' size=%3")
                 .arg(fileId, mime).arg(data.size()));
         emit attachmentDownloaded(fileId, data, mime);
     });

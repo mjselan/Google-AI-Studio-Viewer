@@ -68,12 +68,6 @@ void ResponsePane::showResponse(const Conversation::PromptResponsePair &pair,
     removeFilePreviews();
     m_browser->clear();
 
-    Logger::instance().info(
-        QString("[ResponsePane] Showing pair: text.len=%1 driveDocumentId='%2' responses=%3")
-            .arg(pair.prompt.text.length())
-            .arg(pair.prompt.driveDocumentId)
-            .arg(pair.responses.size()));
-
     m_browser->setHtml(
         "<h3>Prompt</h3><div style='padding:8px; margin:4px 0;'>"
         + markdownToHtml(pair.prompt.text) + "</div><hr>");
@@ -81,16 +75,13 @@ void ResponsePane::showResponse(const Conversation::PromptResponsePair &pair,
     if (!pair.prompt.driveDocumentId.isEmpty())
     {
         Logger::instance().info(
-            QString("[ResponsePane] driveDocumentId non-empty, calling appendFileAttachment"));
+            QString("[Attachment] showResponse: displaying pair with docId='%1'")
+                .arg(pair.prompt.driveDocumentId));
         appendFileAttachment(pair.prompt.driveDocumentId, drive);
     }
 
     if (!pair.prompt.inlineImageData.isEmpty())
     {
-        Logger::instance().info(
-            QString("[ResponsePane] inlineImage present, mime=%1 len=%2")
-                .arg(pair.prompt.inlineImageMime)
-                .arg(pair.prompt.inlineImageData.length()));
         appendInlineImage(pair.prompt.inlineImageData, pair.prompt.inlineImageMime);
     }
 
@@ -133,11 +124,15 @@ void ResponsePane::appendModelResponse(const QString &text, bool isThought, bool
 
 void ResponsePane::appendFileAttachment(const QString &fileId, DriveApi *drive)
 {
-    Logger::instance().info(
-        QString("[ResponsePane] appendFileAttachment called: fileId='%1' drive=%2")
-            .arg(fileId).arg(drive ? "valid" : "null"));
-    if (!drive) return;
+    if (!drive)
+    {
+        Logger::instance().warn(
+            QString("[Attachment] appendFileAttachment: drive is null for fileId='%1'").arg(fileId));
+        return;
+    }
 
+    Logger::instance().info(
+        QString("[Attachment] appendFileAttachment: downloading fileId='%1'").arg(fileId));
     m_browser->append("<hr><b>Attached file:</b> " + fileId + "<br>");
 
     auto *preview = new FilePreviewWidget(fileId, this);
@@ -166,13 +161,9 @@ void ResponsePane::appendInlineImage(const QString &base64data, const QString &m
         preview->setContent(raw, mimeType);
         m_layout->addWidget(preview);
         m_filePreviews.append(preview);
-        Logger::instance().info(
-            QString("[ResponsePane] Inline image displayed: %1x%2")
-                .arg(pix.width()).arg(pix.height()));
     }
     else
     {
-        Logger::instance().error("[ResponsePane] Failed to decode inline image");
         m_browser->append("<p><i>[Inline image could not be decoded]</i></p>");
     }
 }

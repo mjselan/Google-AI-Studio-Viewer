@@ -8,7 +8,6 @@
 #include "api/CopilotApi.h"
 #include "api/ConversationModel.h"
 #include "models/Conversation.h"
-#include "app/Logger.h"
 #include <QMessageBox>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -38,7 +37,6 @@ MainWindow::MainWindow(QWidget *parent)
 
     connect(m_auth, &AuthManager::authSuccess, this, [this](const QString &message)
     {
-        Logger::instance().info("Auth success: " + message);
         m_drive->setAccessToken(m_auth->accessToken());
         m_drive->findFolder("Google AI Studio");
         m_signInAction->setVisible(false);
@@ -48,37 +46,27 @@ MainWindow::MainWindow(QWidget *parent)
 
     connect(m_auth, &AuthManager::authFailed, this, [this](const QString &err)
     {
-        Logger::instance().error("Auth failed: " + err);
         statusBar()->showMessage("Auth failed: " + err);
         QMessageBox::warning(this, "Auth Error", err);
     });
 
     connect(m_drive, &DriveApi::folderFound, this, [this](const QString &folderId)
     {
-        Logger::instance().info("Google AI Studio folder found: " + folderId);
         onFolderFound(folderId);
     });
     connect(m_drive, &DriveApi::folderNotFound, this, [this]()
     {
-        Logger::instance().error("Google AI Studio folder not found");
         statusBar()->showMessage("'Google AI Studio' folder not found in Drive");
     });
     connect(m_drive, &DriveApi::conversationListReady, this, &MainWindow::onConversationsLoaded);
     connect(m_drive, &DriveApi::conversationDownloaded, this,
         [this](const QString &fileId, const QString &fileName, const QJsonObject &data)
         {
-            Logger::instance().debug(QString("Downloaded: '%1' (%2)").arg(fileName, fileId));
             Conversation conv = m_convModel->parseConversation(fileId, fileName, data);
-            Logger::instance().debug(
-                QString("Parsed: '%1' model='%2' chunks=%3 pairs=%4")
-                    .arg(fileName, conv.model)
-                    .arg(conv.messages.size())
-                    .arg(conv.pairs.size()));
             m_convPane->addConversation(conv);
         });
     connect(m_drive, &DriveApi::apiError, this, [this](const QString &err)
     {
-        Logger::instance().error("API error: " + err);
         statusBar()->showMessage("API error: " + err);
     });
 
@@ -221,7 +209,6 @@ void MainWindow::onBackendChanged(int index)
 
 void MainWindow::switchToGoogleBackend()
 {
-    Logger::instance().info("Switching to Google backend");
     m_chatBar->setVisible(false);
     m_signInAction->setVisible(!m_auth->isAuthenticated());
     m_signOutAction->setVisible(m_auth->isAuthenticated());
@@ -243,7 +230,6 @@ void MainWindow::switchToGoogleBackend()
 
 void MainWindow::switchToCopilotBackend()
 {
-    Logger::instance().info("Switching to Copilot backend");
     m_signInAction->setVisible(false);
     m_signOutAction->setVisible(false);
     m_chatBar->setVisible(true);
@@ -259,7 +245,6 @@ void MainWindow::switchToCopilotBackend()
 
 void MainWindow::onCopilotConnected(const QString &modelName)
 {
-    Logger::instance().info("Connected to Copilot. Model: " + modelName);
     statusBar()->showMessage("Connected to local server. Model: " + modelName);
 
     for (const auto &conv : m_localConversations)
@@ -268,7 +253,6 @@ void MainWindow::onCopilotConnected(const QString &modelName)
 
 void MainWindow::onCopilotResponse(const QString &content, const QString &conversationId)
 {
-    Logger::instance().info(QString("Copilot response: %1 chars, convId=%2").arg(content.size()).arg(conversationId));
     m_waitingForResponse = false;
     m_chatInput->setEnabled(true);
     m_sendButton->setEnabled(true);
@@ -290,7 +274,6 @@ void MainWindow::onCopilotResponse(const QString &content, const QString &conver
 
 void MainWindow::onCopilotError(const QString &error)
 {
-    Logger::instance().error("Copilot error: " + error);
     m_waitingForResponse = false;
     m_chatInput->setEnabled(true);
     m_sendButton->setEnabled(true);
@@ -310,11 +293,9 @@ void MainWindow::onSendPrompt()
     QString text = m_chatInput->text().trimmed();
     if (text.isEmpty() || m_waitingForResponse)
     {
-        Logger::instance().debug("onSendPrompt: empty or waiting for response");
         return;
     }
 
-    Logger::instance().info("Sending prompt: " + text.left(80));
     m_chatInput->clear();
     m_chatInput->setEnabled(false);
     m_sendButton->setEnabled(false);
@@ -440,13 +421,13 @@ void MainWindow::onFolderFound(const QString &folderId)
 void MainWindow::onConversationsLoaded(const QList<QPair<QString, QString>> &files)
 {
     m_conversationFiles = files;
-    Logger::instance().info(QString("Found %1 conversation files").arg(files.size()));
-    statusBar()->showMessage(QString("Found %1 conversations. Downloading...").arg(files.size()));
+    int count = qMin(2, files.size());
+    statusBar()->showMessage(QString("Found %1 conversations. Downloading last %2...")
+        .arg(files.size()).arg(count));
 
-    for (const auto &f : files)
+    for (int i = 0; i < count; ++i)
     {
-        Logger::instance().debug(QString("Downloading: '%1' (%2)").arg(f.second, f.first));
-        m_drive->downloadConversation(f.first, f.second);
+        m_drive->downloadConversation(files[i].first, files[i].second);
     }
 
     m_convPane->setFileList(files);
@@ -456,20 +437,11 @@ void MainWindow::onConversationSelected(int index)
 {
     if (index < 0 || index >= m_convPane->conversationCount())
     {
-        Logger::instance().warn(
-            QString("Conversation selected out of range: index=%1 count=%2")
-                .arg(index).arg(m_convPane->conversationCount()));
         return;
     }
 
     m_selectedConvIndex = index;
     const auto &conv = m_convPane->conversationAt(index);
-
-    Logger::instance().info(
-        QString("Conversation loaded: '%1' pairs=%2 tokens=%3")
-            .arg(conv.fileName)
-            .arg(conv.pairs.size())
-            .arg(conv.totalTokenCount()));
 
     m_promptPane->setConversation(conv);
     m_responsePane->clear();
@@ -485,26 +457,17 @@ void MainWindow::onPromptSelected(int pairIndex)
 {
     if (m_selectedConvIndex < 0)
     {
-        Logger::instance().warn("Prompt selected but no conversation selected");
         return;
     }
 
     const auto &conv = m_convPane->conversationAt(m_selectedConvIndex);
     if (pairIndex < 0 || pairIndex >= conv.pairs.size())
     {
-        Logger::instance().warn(
-            QString("Prompt pair index out of range: pairIndex=%1 pairs=%2")
-                .arg(pairIndex).arg(conv.pairs.size()));
         return;
     }
 
     const auto &pair = conv.pairs.at(pairIndex);
     bool showThoughts = m_toggleThoughts->isChecked();
-
-    Logger::instance().debug(
-        QString("Showing response for prompt %1: '%2'")
-            .arg(pairIndex)
-            .arg(pair.prompt.text.left(50)));
 
     m_responsePane->showResponse(pair, showThoughts, m_drive);
 }

@@ -16,9 +16,6 @@ PromptListPane::PromptListPane(QWidget *parent)
 
     connect(m_list, &QListWidget::currentRowChanged, this, [this](int row)
     {
-        Logger::instance().debug(
-            QString("Prompt selected: row=%1 of %2 pairs")
-                .arg(row).arg(m_currentConv.pairs.size()));
         emit promptSelected(row);
     });
 }
@@ -26,10 +23,6 @@ PromptListPane::PromptListPane(QWidget *parent)
 void PromptListPane::setConversation(const Conversation &conv)
 {
     m_currentConv = conv;
-    Logger::instance().debug(
-        QString("Setting prompts: %1 pairs for '%2'")
-            .arg(conv.pairs.size())
-            .arg(conv.fileName));
     refreshList();
 }
 
@@ -37,7 +30,6 @@ void PromptListPane::clear()
 {
     m_list->clear();
     m_currentConv = Conversation();
-    Logger::instance().debug("Prompts cleared");
 }
 
 int PromptListPane::currentIndex() const
@@ -49,9 +41,6 @@ void PromptListPane::refreshList()
 {
     m_list->blockSignals(true);
     m_list->clear();
-
-    Logger::instance().info(
-        QString("[PromptListPane] Building list: %1 pairs").arg(m_currentConv.pairs.size()));
 
     for (int i = 0; i < m_currentConv.pairs.size(); ++i)
     {
@@ -68,24 +57,20 @@ void PromptListPane::refreshList()
             ? pair.prompt.createTime.toLocalTime().toString("yyyy-MM-dd hh:mm:ss")
             : "no-time";
 
-        Logger::instance().debug(
-            QString("[PromptListPane] Pair %1: responses=%2 tokens=%3 time=%4 text='%5'")
-                .arg(i)
-                .arg(pair.responses.size())
-                .arg(pair.prompt.tokenCount)
-                .arg(dateStr)
-                .arg(pair.prompt.text.left(40)));
-
         auto *item = new QListWidgetItem(
             QString("%1\n[%2 tok]  %3")
                 .arg(preview)
                 .arg(pair.prompt.tokenCount)
                 .arg(dateStr));
         m_list->addItem(item);
-    }
 
-    Logger::instance().info(
-        QString("[PromptListPane] Rendered %1 items").arg(m_list->count()));
+        if (!pair.prompt.driveDocumentId.isEmpty())
+            Logger::instance().info(
+                QString("[Attachment] PromptList: pair %1 docId='%2' text='%3'")
+                    .arg(i)
+                    .arg(pair.prompt.driveDocumentId)
+                    .arg(pair.prompt.text.left(60)));
+    }
 
     m_list->blockSignals(false);
 }
