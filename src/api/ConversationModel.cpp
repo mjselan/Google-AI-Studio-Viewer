@@ -89,9 +89,16 @@ void ConversationModel::buildPairs(Conversation &conv) const
                 if (newHasText && !currentHasText)
                 {
                     QString docId = currentPrompt.driveDocumentId;
+                    QString imgData = currentPrompt.inlineImageData;
+                    QString imgMime = currentPrompt.inlineImageMime;
                     currentPrompt = msg;
                     if (currentPrompt.driveDocumentId.isEmpty())
                         currentPrompt.driveDocumentId = docId;
+                    if (currentPrompt.inlineImageData.isEmpty())
+                    {
+                        currentPrompt.inlineImageData = imgData;
+                        currentPrompt.inlineImageMime = imgMime;
+                    }
                     Logger::instance().info(
                         QString("[Attachment] Merged doc-only into text prompt: docId='%1' text='%2'")
                             .arg(currentPrompt.driveDocumentId)
@@ -101,6 +108,11 @@ void ConversationModel::buildPairs(Conversation &conv) const
                 {
                     if (currentPrompt.driveDocumentId.isEmpty())
                         currentPrompt.driveDocumentId = msg.driveDocumentId;
+                    if (currentPrompt.inlineImageData.isEmpty())
+                    {
+                        currentPrompt.inlineImageData = msg.inlineImageData;
+                        currentPrompt.inlineImageMime = msg.inlineImageMime;
+                    }
                     Logger::instance().info(
                         QString("[Attachment] Merged doc into text prompt: docId='%1' text='%2'")
                             .arg(currentPrompt.driveDocumentId)

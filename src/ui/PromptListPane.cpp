@@ -50,6 +50,8 @@ void PromptListPane::refreshList()
             preview += "...";
         if (preview.isEmpty() && !pair.prompt.driveDocumentId.isEmpty())
             preview = "[Uploaded file]";
+        else if (preview.isEmpty() && !pair.prompt.inlineImageData.isEmpty())
+            preview = "[Inline image]";
         else if (preview.isEmpty())
             preview = "(empty prompt)";
 
