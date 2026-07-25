@@ -92,7 +92,7 @@ void DriveApi::listConversations(const QString &folderId)
     query.addQueryItem("q", QString("'%1' in parents and trashed=false").arg(folderId));
     query.addQueryItem("fields", "files(id,name,modifiedTime)");
     query.addQueryItem("orderBy", "modifiedTime desc");
-    query.addQueryItem("pageSize", "100");
+    query.addQueryItem("pageSize", "1000");
 
     QUrl url("https://www.googleapis.com/drive/v3/files");
     url.setQuery(query);

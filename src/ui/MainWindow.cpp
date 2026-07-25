@@ -421,7 +421,8 @@ void MainWindow::onFolderFound(const QString &folderId)
 void MainWindow::onConversationsLoaded(const QList<QPair<QString, QString>> &files)
 {
     m_conversationFiles = files;
-    int count = qMin(2, files.size());
+    //int count = qMin(2, files.size());
+    int count = files.size();
     statusBar()->showMessage(QString("Found %1 conversations. Downloading last %2...")
         .arg(files.size()).arg(count));
 
