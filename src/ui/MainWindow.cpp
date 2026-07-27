@@ -449,6 +449,20 @@ void MainWindow::onConversationsLoaded(const QList<DriveFile> &files)
 
     m_convPane->clear();
     m_convPane->setFileList(files);
+
+    for (const auto &f : files)
+    {
+        QDateTime cachedModTime = m_cache->getModifiedTime(f.fileId);
+        if (cachedModTime.isValid() && cachedModTime.toSecsSinceEpoch() == f.modifiedTime.toSecsSinceEpoch())
+        {
+            QJsonObject data = m_cache->loadConversation(f.fileId);
+            if (!data.isEmpty())
+            {
+                Conversation parsed = m_convModel->parseConversation(f.fileId, f.fileName, data);
+                m_convPane->addConversation(parsed);
+            }
+        }
+    }
 }
 
 void MainWindow::onConversationSelected(int index)
