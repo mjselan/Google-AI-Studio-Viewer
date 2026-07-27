@@ -499,8 +499,10 @@ void DriveApi::findFolder(const QString &folderName)
 void DriveApi::listConversations(const QString &folderId)
 {
     QUrlQuery query;
+    // Revert the q parameter to fetch all active files in the folder
     query.addQueryItem("q", QString("'%1' in parents and trashed=false").arg(folderId));
-    query.addQueryItem("fields", "files(id,name,modifiedTime)");
+    // ADDED: Request mimeType and fileExtension from Google Drive
+    query.addQueryItem("fields", "files(id,name,modifiedTime,mimeType,fileExtension)");
     query.addQueryItem("orderBy", "modifiedTime desc");
     query.addQueryItem("pageSize", "1000");
 
@@ -508,15 +510,48 @@ void DriveApi::listConversations(const QString &folderId)
     url.setQuery(query);
 
     sendGet(url.toString(), [this](const QJsonObject &response)
-    {
-        QList<QPair<QString, QString>> files;
-        for (const auto &f : response["files"].toArray())
-        {
-            auto obj = f.toObject();
-            files.append({obj["id"].toString(), obj["name"].toString()});
-        }
-        emit conversationListReady(files);
-    });
+            {
+                QList<DriveFile> files;
+                for (const auto &f : response["files"].toArray())
+                {
+                    auto obj = f.toObject();
+                    QString id = obj["id"].toString();
+                    QString name = obj["name"].toString();
+                    QString mime = obj["mimeType"].toString();
+                    QString ext = obj["fileExtension"].toString().toLower();
+
+                    // 1. Filter out obvious media/document MIME types
+                    if (mime.startsWith("image/") ||
+                        mime.startsWith("video/") ||
+                        mime.startsWith("audio/") ||
+                        mime == "application/pdf" ||
+                        mime == "text/csv")
+                    {
+                        continue;
+                    }
+
+                    // 2. Filter out files with common attachment extensions.
+                    // Google AI Studio conversations are saved without a file extension.
+                    // If it has an extension like .json or .txt, it's a user-uploaded attachment.
+                    if (!ext.isEmpty())
+                    {
+                        QStringList attachmentExts = {
+                            "json", "txt", "pdf", "csv", "md", "png", "jpg", "jpeg",
+                            "mp3", "mp4", "wav", "py", "cpp", "h", "js", "html"
+                        };
+                        if (attachmentExts.contains(ext)) {
+                            continue;
+                        }
+                    }
+
+                    DriveFile df;
+                    df.fileId = id;
+                    df.fileName = name;
+                    df.modifiedTime = QDateTime::fromString(obj["modifiedTime"].toString(), Qt::ISODate);
+                    files.append(df);
+                }
+                emit conversationListReady(files);
+            });
 }
 
 void DriveApi::downloadConversation(const QString &fileId, const QString &fileName)
@@ -613,7 +648,15 @@ void DriveApi::downloadAttachment(const QString &fileId)
 #include <QList>
 #include <QJsonObject>
 #include <QNetworkReply>
+#include <QDateTime>
 #include <functional>
+
+struct DriveFile
+{
+    QString fileId;
+    QString fileName;
+    QDateTime modifiedTime;
+};
 
 class DriveApi : public QObject
 {
@@ -633,7 +676,7 @@ public:
 signals:
     void folderFound(const QString &folderId);
     void folderNotFound();
-    void conversationListReady(const QList<QPair<QString, QString>> &files);
+    void conversationListReady(const QList<DriveFile> &files);
     void conversationDownloaded(const QString &fileId, const QString &fileName, const QJsonObject &data);
     void attachmentDownloaded(const QString &fileId, const QByteArray &data, const QString &mimeType);
     void apiError(const QString &error);
@@ -1443,6 +1486,7 @@ struct Message
 ```cpp
 #include "ConversationListPane.h"
 #include "app/Logger.h"
+#include "api/DriveApi.h"
 #include <QVBoxLayout>
 #include <QLabel>
 #include <algorithm>
@@ -1473,17 +1517,19 @@ bool ConversationListPane::isValidConv(const Conversation &conv) const
     return true;
 }
 
-void ConversationListPane::setFileList(const QList<QPair<QString, QString>> &files)
+void ConversationListPane::setFileList(const QList<DriveFile> &files)
 {
     Logger::instance().debug(QString("[ConvList] setFileList: received %1 files").arg(files.size()));
     m_fileList = files;
     m_conversations.clear();
     for (const auto &f : files)
     {
-        Logger::instance().debug(QString("[ConvList] Creating stub: fileId=%1 fileName=%2").arg(f.first, f.second));
+        Logger::instance().debug(QString("[ConvList] Creating stub: fileId=%1 fileName=%2 modifiedTime=%3")
+            .arg(f.fileId, f.fileName, f.modifiedTime.toString(Qt::ISODate)));
         Conversation stub;
-        stub.fileId = f.first;
-        stub.fileName = f.second;
+        stub.fileId = f.fileId;
+        stub.fileName = f.fileName;
+        stub.lastModified = f.modifiedTime;
         m_conversations.append(stub);
     }
     refreshList();
@@ -1579,7 +1625,10 @@ void ConversationListPane::refreshList()
         }
         else
         {
-            labelText = QString("%1\n[Click to load...]").arg(title);
+            QString dateStr = conv.lastModified.isValid()
+                ? conv.lastModified.toLocalTime().toString("yyyy-MM-dd hh:mm:ss")
+                : "";
+            labelText = QString("%1\n[Click to load...] %2").arg(title, dateStr);
         }
 
         Logger::instance().debug(QString("[ConvList] Label text: %1").arg(labelText));
@@ -1600,8 +1649,8 @@ void ConversationListPane::applySort()
         std::sort(m_conversations.begin(), m_conversations.end(),
             [](const Conversation &a, const Conversation &b)
             {
-                auto ta = a.messages.isEmpty() ? QDateTime() : a.messages.last().createTime;
-                auto tb = b.messages.isEmpty() ? QDateTime() : b.messages.last().createTime;
+                auto ta = a.messages.isEmpty() ? a.lastModified : a.messages.last().createTime;
+                auto tb = b.messages.isEmpty() ? b.lastModified : b.messages.last().createTime;
                 return ta > tb;
             });
         break;
@@ -1609,8 +1658,8 @@ void ConversationListPane::applySort()
         std::sort(m_conversations.begin(), m_conversations.end(),
             [](const Conversation &a, const Conversation &b)
             {
-                auto ta = a.messages.isEmpty() ? QDateTime() : a.messages.last().createTime;
-                auto tb = b.messages.isEmpty() ? QDateTime() : b.messages.last().createTime;
+                auto ta = a.messages.isEmpty() ? a.lastModified : a.messages.last().createTime;
+                auto tb = b.messages.isEmpty() ? b.lastModified : b.messages.last().createTime;
                 return ta < tb;
             });
         break;
@@ -1647,6 +1696,8 @@ void ConversationListPane::sortBy(SortMode mode)
 #include <QList>
 #include "models/Conversation.h"
 
+struct DriveFile;
+
 class ConversationListPane : public QWidget
 {
     Q_OBJECT
@@ -1655,7 +1706,7 @@ public:
 
     explicit ConversationListPane(QWidget *parent = nullptr);
 
-    void setFileList(const QList<QPair<QString, QString>> &files);
+    void setFileList(const QList<DriveFile> &files);
     void addConversation(const Conversation &conv);
     void clear();
     int conversationCount() const;
@@ -1675,7 +1726,7 @@ private:
     QListWidget *m_list;
     QList<Conversation> m_conversations;
     QList<int> m_rowToConv;  // visual row → m_conversations index
-    QList<QPair<QString, QString>> m_fileList;
+    QList<DriveFile> m_fileList;
     SortMode m_sortMode = NewestFirst;
     int m_filesPopulated = 0;
 };
@@ -2079,7 +2130,7 @@ private:
 #include <QJsonObject>
 #include "app/Logger.h"
 
-#define MAX_CONVERSATIONS 4
+//#define MAX_CONVERSATIONS 4
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -2497,32 +2548,16 @@ void MainWindow::onFolderFound(const QString &folderId)
     m_drive->listConversations(folderId);
 }
 
-void MainWindow::onConversationsLoaded(const QList<QPair<QString, QString>> &files)
+void MainWindow::onConversationsLoaded(const QList<DriveFile> &files)
 {
     m_conversationFiles = files;
     Logger::instance().debug(QString("[MainWindow] onConversationsLoaded: %1 files").arg(files.size()));
-    int preloadCount = files.size();
-#ifdef MAX_CONVERSATIONS
-    preloadCount = qMin(MAX_CONVERSATIONS, files.size());
-#endif
 
-    for (int i = 0; i < preloadCount; ++i)
-    {
-        Logger::instance().debug(QString("[MainWindow]   [%1] fileId=%2 fileName=%3")
-            .arg(i).arg(files[i].first, files[i].second));
-    }
+    // Display the count in the status bar
+    statusBar()->showMessage(QString("Found %1 conversations. (Ready to load on click)")
+                                 .arg(files.size()));
 
-
-    Logger::instance().debug(QString("[MainWindow] Auto-downloading first %1 conversations").arg(preloadCount));
-
-    for (int i = 0; i < preloadCount; ++i)
-    {
-        m_drive->downloadConversation(files[i].first, files[i].second);
-    }
-
-    statusBar()->showMessage(QString("Found %1 conversations. Loading %2...")
-        .arg(files.size()).arg(preloadCount));
-
+    // Clear the current pane and pass ONLY the file list (which creates the stubs)
     m_convPane->clear();
     m_convPane->setFileList(files);
 }
@@ -2558,6 +2593,9 @@ void MainWindow::onConversationSelected(int index)
     Logger::instance().debug("[MainWindow] Conversation fully loaded, displaying");
     m_promptPane->setConversation(conv);
     m_responsePane->clear();
+
+    if (!conv.pairs.isEmpty())
+        onPromptSelected(0);
 
     statusBar()->showMessage(
         QString("Conversation: %1 | %2 pairs | %3 tokens")
@@ -2642,6 +2680,7 @@ void MainWindow::loadConversation(const QString &fileId, const QString &fileName
 #include <QHBoxLayout>
 #include "models/Conversation.h"
 
+struct DriveFile;
 class AuthManager;
 class DriveApi;
 class CopilotApi;
@@ -2662,7 +2701,7 @@ private slots:
     void onSignIn();
     void onSignOut();
     void onFolderFound(const QString &folderId);
-    void onConversationsLoaded(const QList<QPair<QString, QString>> &files);
+    void onConversationsLoaded(const QList<DriveFile> &files);
     void onConversationSelected(int index);
     void onPromptSelected(int pairIndex);
     void onSearchTriggered();
@@ -2708,7 +2747,7 @@ private:
     QPushButton *m_sendButton;
 
     QString m_currentFolderId;
-    QList<QPair<QString, QString>> m_conversationFiles;
+    QList<DriveFile> m_conversationFiles;
     int m_selectedConvIndex = -1;
 
     // Local (Copilot) conversation state

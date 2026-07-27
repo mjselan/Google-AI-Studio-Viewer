@@ -485,6 +485,9 @@ void MainWindow::onConversationSelected(int index)
     m_promptPane->setConversation(conv);
     m_responsePane->clear();
 
+    if (!conv.pairs.isEmpty())
+        onPromptSelected(0);
+
     statusBar()->showMessage(
         QString("Conversation: %1 | %2 pairs | %3 tokens")
             .arg(conv.fileName)
