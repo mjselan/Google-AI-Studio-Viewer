@@ -3,6 +3,7 @@
 #include <QString>
 #include <QDateTime>
 #include <QJsonObject>
+#include <QSqlDatabase>
 
 class LocalCache
 {
@@ -18,4 +19,5 @@ public:
 
 private:
     bool m_initialized = false;
+    QSqlDatabase m_db;
 };

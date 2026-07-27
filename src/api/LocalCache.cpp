@@ -1,6 +1,5 @@
 #include "LocalCache.h"
 #include "app/Logger.h"
-#include <QSqlDatabase>
 #include <QSqlQuery>
 #include <QSqlError>
 #include <QStandardPaths>
@@ -20,16 +19,16 @@ void LocalCache::init()
     QDir().mkpath(dataDir);
     QString dbPath = dataDir + "/viewer_cache.db";
 
-    QSqlDatabase db = QSqlDatabase::addDatabase("QSQLITE");
-    db.setDatabaseName(dbPath);
+    m_db = QSqlDatabase::addDatabase("QSQLITE");
+    m_db.setDatabaseName(dbPath);
 
-    if (!db.open())
+    if (!m_db.open())
     {
-        Logger::instance().error("[LocalCache] Failed to open database: " + db.lastError().text());
+        Logger::instance().error("[LocalCache] Failed to open database: " + m_db.lastError().text());
         return;
     }
 
-    QSqlQuery query(db);
+    QSqlQuery query(m_db);
     if (!query.exec(
             "CREATE TABLE IF NOT EXISTS conversations ("
             "file_id TEXT PRIMARY KEY, "
@@ -51,19 +50,17 @@ void LocalCache::saveConversation(const QString &fileId, const QString &fileName
     if (!m_initialized)
         return;
 
-    QSqlQuery query;
+    QSqlQuery query(m_db);
     query.prepare(
         "INSERT OR REPLACE INTO conversations (file_id, file_name, modified_time, json_data) "
         "VALUES (:fid, :fname, :mtime, :jdata)");
     query.bindValue(":fid", fileId);
     query.bindValue(":fname", fileName);
-    query.bindValue(":mtime", modTime.toString(Qt::ISODate));
+    query.bindValue(":mtime", modTime.isValid() ? modTime.toString(Qt::ISODate) : QString());
     query.bindValue(":jdata", QString(QJsonDocument(data).toJson(QJsonDocument::Compact)));
 
     if (!query.exec())
-        Logger::instance().error("[LocalCache] saveConversation failed: " + query.lastError().text());
-    else
-        Logger::instance().debug("[LocalCache] Saved: " + fileId);
+        Logger::instance().error("[LocalCache] save failed: " + query.lastError().text());
 }
 
 QJsonObject LocalCache::loadConversation(const QString &fileId)
@@ -71,15 +68,14 @@ QJsonObject LocalCache::loadConversation(const QString &fileId)
     if (!m_initialized)
         return {};
 
-    QSqlQuery query;
+    QSqlQuery query(m_db);
     query.prepare("SELECT json_data FROM conversations WHERE file_id = :fid");
     query.bindValue(":fid", fileId);
 
     if (!query.exec() || !query.next())
         return {};
 
-    QByteArray jsonBytes = query.value(0).toByteArray();
-    QJsonDocument doc = QJsonDocument::fromJson(jsonBytes);
+    QJsonDocument doc = QJsonDocument::fromJson(query.value(0).toByteArray());
     return doc.object();
 }
 
@@ -88,7 +84,7 @@ QDateTime LocalCache::getModifiedTime(const QString &fileId)
     if (!m_initialized)
         return {};
 
-    QSqlQuery query;
+    QSqlQuery query(m_db);
     query.prepare("SELECT modified_time FROM conversations WHERE file_id = :fid");
     query.bindValue(":fid", fileId);
 

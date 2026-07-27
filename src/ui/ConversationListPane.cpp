@@ -1,5 +1,4 @@
 #include "ConversationListPane.h"
-#include "app/Logger.h"
 #include "api/DriveApi.h"
 #include <QVBoxLayout>
 #include <QLabel>
@@ -33,13 +32,10 @@ bool ConversationListPane::isValidConv(const Conversation &conv) const
 
 void ConversationListPane::setFileList(const QList<DriveFile> &files)
 {
-    Logger::instance().debug(QString("[ConvList] setFileList: received %1 files").arg(files.size()));
     m_fileList = files;
     m_conversations.clear();
     for (const auto &f : files)
     {
-        Logger::instance().debug(QString("[ConvList] Creating stub: fileId=%1 fileName=%2 modifiedTime=%3")
-            .arg(f.fileId, f.fileName, f.modifiedTime.toString(Qt::ISODate)));
         Conversation stub;
         stub.fileId = f.fileId;
         stub.fileName = f.fileName;
@@ -51,23 +47,16 @@ void ConversationListPane::setFileList(const QList<DriveFile> &files)
 
 void ConversationListPane::addConversation(const Conversation &conv)
 {
-    Logger::instance().debug(QString("[ConvList] addConversation: fileId=%1 fileName=%2 model=%3 messages=%4 pairs=%5")
-        .arg(conv.fileId, conv.fileName, conv.model)
-        .arg(conv.messages.size())
-        .arg(conv.pairs.size()));
-
     for (int i = 0; i < m_conversations.size(); ++i)
     {
         if (m_conversations[i].fileId == conv.fileId)
         {
-            Logger::instance().debug(QString("[ConvList] Updating existing stub at index %1").arg(i));
             m_conversations[i] = conv;
             refreshList();
             return;
         }
     }
 
-    Logger::instance().debug("[ConvList] Appending new conversation (not a stub)");
     m_conversations.append(conv);
     m_filesPopulated++;
     refreshList();
@@ -105,8 +94,6 @@ void ConversationListPane::refreshList()
     m_list->clear();
     m_rowToConv.clear();
 
-    Logger::instance().debug(QString("[ConvList] refreshList: rendering %1 conversations").arg(m_conversations.size()));
-
     for (int i = 0; i < m_conversations.size(); ++i)
     {
         const auto &conv = m_conversations[i];
@@ -116,14 +103,6 @@ void ConversationListPane::refreshList()
         m_rowToConv.append(i);
         QString title = conv.displayTitle();
         bool isDownloaded = !conv.model.isEmpty() || !conv.messages.isEmpty();
-
-        Logger::instance().debug(QString("[ConvList] Item %1 fileId=%2 title='%3' isDownloaded=%4 messages=%5 model='%6'")
-            .arg(i)
-            .arg(conv.fileId)
-            .arg(title)
-            .arg(isDownloaded ? "true" : "false")
-            .arg(conv.messages.size())
-            .arg(conv.model));
 
         QString dateStr;
         if (isDownloaded)
@@ -138,8 +117,6 @@ void ConversationListPane::refreshList()
         QString labelText = dateStr.isEmpty()
             ? title
             : QString("%1\n%2").arg(title, dateStr);
-
-        Logger::instance().debug(QString("[ConvList] Label text: %1").arg(labelText));
 
         auto *item = new QListWidgetItem(labelText);
         item->setToolTip(conv.fileName);
