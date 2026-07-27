@@ -20,6 +20,8 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 
+#define MAX_CONVERSATIONS 4
+
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , m_auth(new AuthManager(this))
@@ -421,8 +423,15 @@ void MainWindow::onFolderFound(const QString &folderId)
 void MainWindow::onConversationsLoaded(const QList<QPair<QString, QString>> &files)
 {
     m_conversationFiles = files;
+    int count = 0;
+#ifdef MAX_CONVERSATIONS
+    count = MAX_CONVERSATIONS;
+#else
+    count = files.size();
+#endif
+
     //int count = qMin(2, files.size());
-    int count = files.size();
+    //int count = files.size();
     statusBar()->showMessage(QString("Found %1 conversations. Downloading last %2...")
         .arg(files.size()).arg(count));
 
