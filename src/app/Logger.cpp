@@ -33,7 +33,7 @@ void Logger::init(const QString &filePath)
         m_file.close();
 
     m_file.setFileName(filePath);
-    m_file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
+    m_file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text);
 }
 
 void Logger::log(Level level, const QString &message)

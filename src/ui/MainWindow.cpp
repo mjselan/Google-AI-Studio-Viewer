@@ -19,8 +19,9 @@
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include "app/Logger.h"
 
-#define MAX_CONVERSATIONS 4
+//#define MAX_CONVERSATIONS 4
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -64,8 +65,26 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_drive, &DriveApi::conversationDownloaded, this,
         [this](const QString &fileId, const QString &fileName, const QJsonObject &data)
         {
+            Logger::instance().debug(QString("[MainWindow] conversationDownloaded: fileId=%1 fileName=%2 dataKeys=%3")
+                .arg(fileId, fileName, data.keys().join(", ")));
+
             Conversation conv = m_convModel->parseConversation(fileId, fileName, data);
+
+            Logger::instance().debug(QString("[MainWindow] Parsed: model=%1 messages=%2 pairs=%3")
+                .arg(conv.model)
+                .arg(conv.messages.size())
+                .arg(conv.pairs.size()));
+
             m_convPane->addConversation(conv);
+
+            if (m_selectedConvIndex >= 0 && m_selectedConvIndex < m_convPane->conversationCount())
+            {
+                if (m_convPane->conversationAt(m_selectedConvIndex).fileId == fileId)
+                {
+                    Logger::instance().debug("[MainWindow] Auto-loading active conversation");
+                    onConversationSelected(m_selectedConvIndex);
+                }
+            }
         });
     connect(m_drive, &DriveApi::apiError, this, [this](const QString &err)
     {
@@ -423,36 +442,46 @@ void MainWindow::onFolderFound(const QString &folderId)
 void MainWindow::onConversationsLoaded(const QList<QPair<QString, QString>> &files)
 {
     m_conversationFiles = files;
-    int count = 0;
-#ifdef MAX_CONVERSATIONS
-    count = MAX_CONVERSATIONS;
-#else
-    count = files.size();
-#endif
+    Logger::instance().debug(QString("[MainWindow] onConversationsLoaded: %1 files").arg(files.size()));
 
-    //int count = qMin(2, files.size());
-    //int count = files.size();
-    statusBar()->showMessage(QString("Found %1 conversations. Downloading last %2...")
-        .arg(files.size()).arg(count));
+    // Display the count in the status bar
+    statusBar()->showMessage(QString("Found %1 conversations. (Ready to load on click)")
+                                 .arg(files.size()));
 
-    for (int i = 0; i < count; ++i)
-    {
-        m_drive->downloadConversation(files[i].first, files[i].second);
-    }
-
+    // Clear the current pane and pass ONLY the file list (which creates the stubs)
+    m_convPane->clear();
     m_convPane->setFileList(files);
 }
 
 void MainWindow::onConversationSelected(int index)
 {
+    Logger::instance().debug(QString("[MainWindow] onConversationSelected: index=%1").arg(index));
+
     if (index < 0 || index >= m_convPane->conversationCount())
     {
+        Logger::instance().debug("[MainWindow] Index out of range, returning");
         return;
     }
 
     m_selectedConvIndex = index;
     const auto &conv = m_convPane->conversationAt(index);
 
+    Logger::instance().debug(QString("[MainWindow] Selected: fileId=%1 fileName=%2 model=%3 messages=%4 pairs=%5")
+        .arg(conv.fileId, conv.fileName, conv.model)
+        .arg(conv.messages.size())
+        .arg(conv.pairs.size()));
+
+    if (conv.model.isEmpty() && conv.messages.isEmpty())
+    {
+        Logger::instance().debug("[MainWindow] Stub detected, triggering download");
+        statusBar()->showMessage("Downloading conversation data...");
+        m_promptPane->clear();
+        m_responsePane->clear();
+        m_drive->downloadConversation(conv.fileId, conv.fileName);
+        return;
+    }
+
+    Logger::instance().debug("[MainWindow] Conversation fully loaded, displaying");
     m_promptPane->setConversation(conv);
     m_responsePane->clear();
 

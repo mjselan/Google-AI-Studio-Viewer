@@ -89,8 +89,10 @@ void DriveApi::findFolder(const QString &folderName)
 void DriveApi::listConversations(const QString &folderId)
 {
     QUrlQuery query;
+    // Revert the q parameter to fetch all active files in the folder
     query.addQueryItem("q", QString("'%1' in parents and trashed=false").arg(folderId));
-    query.addQueryItem("fields", "files(id,name,modifiedTime)");
+    // ADDED: Request mimeType and fileExtension from Google Drive
+    query.addQueryItem("fields", "files(id,name,modifiedTime,mimeType,fileExtension)");
     query.addQueryItem("orderBy", "modifiedTime desc");
     query.addQueryItem("pageSize", "1000");
 
@@ -98,15 +100,44 @@ void DriveApi::listConversations(const QString &folderId)
     url.setQuery(query);
 
     sendGet(url.toString(), [this](const QJsonObject &response)
-    {
-        QList<QPair<QString, QString>> files;
-        for (const auto &f : response["files"].toArray())
-        {
-            auto obj = f.toObject();
-            files.append({obj["id"].toString(), obj["name"].toString()});
-        }
-        emit conversationListReady(files);
-    });
+            {
+                QList<QPair<QString, QString>> files;
+                for (const auto &f : response["files"].toArray())
+                {
+                    auto obj = f.toObject();
+                    QString id = obj["id"].toString();
+                    QString name = obj["name"].toString();
+                    QString mime = obj["mimeType"].toString();
+                    QString ext = obj["fileExtension"].toString().toLower();
+
+                    // 1. Filter out obvious media/document MIME types
+                    if (mime.startsWith("image/") ||
+                        mime.startsWith("video/") ||
+                        mime.startsWith("audio/") ||
+                        mime == "application/pdf" ||
+                        mime == "text/csv")
+                    {
+                        continue;
+                    }
+
+                    // 2. Filter out files with common attachment extensions.
+                    // Google AI Studio conversations are saved without a file extension.
+                    // If it has an extension like .json or .txt, it's a user-uploaded attachment.
+                    if (!ext.isEmpty())
+                    {
+                        QStringList attachmentExts = {
+                            "json", "txt", "pdf", "csv", "md", "png", "jpg", "jpeg",
+                            "mp3", "mp4", "wav", "py", "cpp", "h", "js", "html"
+                        };
+                        if (attachmentExts.contains(ext)) {
+                            continue;
+                        }
+                    }
+
+                    files.append({id, name});
+                }
+                emit conversationListReady(files);
+            });
 }
 
 void DriveApi::downloadConversation(const QString &fileId, const QString &fileName)

@@ -1,0 +1,3160 @@
+📁 src
+    ├── 📁 api
+│       ├── 📄 api\ConversationModel.cpp
+│   │   ├── 📄 api\ConversationModel.h
+│   │   ├── 📄 api\CopilotApi.cpp
+│   │   ├── 📄 api\CopilotApi.h
+│   │   ├── 📄 api\DriveApi.cpp
+│   │   └── 📄 api\DriveApi.h
+│   ├── 📁 app
+│   │   ├── 📄 app\Application.cpp
+│   │   ├── 📄 app\Application.h
+│   │   ├── 📄 app\AuthManager.cpp
+│   │   ├── 📄 app\AuthManager.h
+│   │   ├── 📄 app\Logger.cpp
+│   │   ├── 📄 app\Logger.h
+│   │   └── 📄 app\patch.diff
+│   ├── 📄 main.cpp
+│   ├── 📁 models
+│   │   ├── 📄 models\Conversation.cpp
+│   │   ├── 📄 models\Conversation.h
+│   │   ├── 📄 models\FileAttachment.cpp
+│   │   ├── 📄 models\FileAttachment.h
+│   │   ├── 📄 models\Message.cpp
+│   │   └── 📄 models\Message.h
+│   └── 📁 ui
+│       ├── 📄 ui\ConversationListPane.cpp
+│       ├── 📄 ui\ConversationListPane.h
+│       ├── 📄 ui\FilePreviewWidget.cpp
+│       ├── 📄 ui\FilePreviewWidget.h
+│       ├── 📄 ui\ImageViewerDialog.cpp
+│       ├── 📄 ui\ImageViewerDialog.h
+│       ├── 📄 ui\MainWindow.cpp
+│       ├── 📄 ui\MainWindow.h
+│       ├── 📄 ui\PromptListPane.cpp
+│       ├── 📄 ui\PromptListPane.h
+│       ├── 📄 ui\ResponsePane.cpp
+│       ├── 📄 ui\ResponsePane.h
+│       ├── 📄 ui\SearchDialog.cpp
+│       └── 📄 ui\SearchDialog.h
+
+// Directory: src\api
+
+// File: src\api\ConversationModel.cpp
+
+```cpp
+#include "ConversationModel.h"
+#include "app/Logger.h"
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <algorithm>
+
+ConversationModel::ConversationModel(QObject *parent)
+    : QObject(parent) {}
+
+Conversation ConversationModel::parseConversation(const QString &fileId,
+                                                   const QString &fileName,
+                                                   const QJsonObject &root) const
+{
+    Conversation conv;
+    conv.fileId = fileId;
+    conv.fileName = fileName;
+
+    // Run settings
+    QJsonObject settings = root["runSettings"].toObject();
+    conv.model = settings["model"].toString();
+    conv.temperature = settings["temperature"].toDouble(1.0);
+    conv.topP = settings["topP"].toDouble(0.95);
+    conv.topK = settings["topK"].toInt(64);
+    conv.maxOutputTokens = settings["maxOutputTokens"].toInt(8192);
+    conv.systemInstruction = root["systemInstruction"].toObject();
+
+    // Parse chunks
+    QJsonArray chunks = root["chunkedPrompt"].toObject()["chunks"].toArray();
+    for (const auto &chunk : chunks)
+        conv.messages.append(Message::fromJson(chunk.toObject()));
+
+    // Sort messages chronologically; user before model for same timestamp
+    std::sort(conv.messages.begin(), conv.messages.end(),
+        [](const Message &a, const Message &b)
+        {
+            if (a.createTime != b.createTime)
+                return a.createTime < b.createTime;
+            if (a.role != b.role)
+                return a.role == "user";
+            return false;
+        });
+
+    buildPairs(conv);
+
+    // Log message order for attachment debugging
+    for (int i = 0; i < conv.messages.size(); ++i)
+    {
+        const auto &m = conv.messages[i];
+        if (!m.driveDocumentId.isEmpty() || m.role == "user")
+            Logger::instance().info(
+                QString("[Attachment] Msg[%1] role='%2' doc='%3' text='%4' time=%5")
+                    .arg(i)
+                    .arg(m.role)
+                    .arg(m.driveDocumentId)
+                    .arg(m.text.left(40))
+                    .arg(m.createTime.toString(Qt::ISODate)));
+    }
+
+    return conv;
+}
+
+void ConversationModel::buildPairs(Conversation &conv) const
+{
+    Message currentPrompt;
+    bool hasPrompt = false;
+
+    for (const auto &msg : conv.messages)
+    {
+        if (msg.role == "user")
+        {
+            if (hasPrompt && msg.createTime == currentPrompt.createTime)
+            {
+                // Same timestamp — merge: combine driveDocumentId and text
+                bool currentHasDoc = !currentPrompt.driveDocumentId.isEmpty();
+                bool newHasDoc = !msg.driveDocumentId.isEmpty();
+                bool currentHasText = !currentPrompt.text.isEmpty();
+                bool newHasText = !msg.text.isEmpty();
+
+                Logger::instance().info(
+                    QString("[Attachment] Merge check at %1: "
+                            "current(doc='%2' text=%3) new(doc='%4' text=%5)")
+                        .arg(msg.createTime.toString(Qt::ISODate))
+                        .arg(currentPrompt.driveDocumentId)
+                        .arg(currentHasText)
+                        .arg(msg.driveDocumentId)
+                        .arg(newHasText));
+
+                // Prefer the message that has text as the base
+                if (newHasText && !currentHasText)
+                {
+                    QString docId = currentPrompt.driveDocumentId;
+                    QString imgData = currentPrompt.inlineImageData;
+                    QString imgMime = currentPrompt.inlineImageMime;
+                    currentPrompt = msg;
+                    if (currentPrompt.driveDocumentId.isEmpty())
+                        currentPrompt.driveDocumentId = docId;
+                    if (currentPrompt.inlineImageData.isEmpty())
+                    {
+                        currentPrompt.inlineImageData = imgData;
+                        currentPrompt.inlineImageMime = imgMime;
+                    }
+                    Logger::instance().info(
+                        QString("[Attachment] Merged doc-only into text prompt: docId='%1' text='%2'")
+                            .arg(currentPrompt.driveDocumentId)
+                            .arg(currentPrompt.text.left(60)));
+                }
+                else if (currentHasText && !newHasText)
+                {
+                    if (currentPrompt.driveDocumentId.isEmpty())
+                        currentPrompt.driveDocumentId = msg.driveDocumentId;
+                    if (currentPrompt.inlineImageData.isEmpty())
+                    {
+                        currentPrompt.inlineImageData = msg.inlineImageData;
+                        currentPrompt.inlineImageMime = msg.inlineImageMime;
+                    }
+                    Logger::instance().info(
+                        QString("[Attachment] Merged doc into text prompt: docId='%1' text='%2'")
+                            .arg(currentPrompt.driveDocumentId)
+                            .arg(currentPrompt.text.left(60)));
+                }
+                else if (!currentHasText && !newHasText)
+                {
+                    // Both doc-only — keep whichever has the driveDocumentId
+                    if (currentPrompt.driveDocumentId.isEmpty())
+                        currentPrompt.driveDocumentId = msg.driveDocumentId;
+                }
+                // else: both have text — keep current (first one wins)
+            }
+            else if (hasPrompt)
+            {
+                currentPrompt = msg;
+            }
+            else
+            {
+                currentPrompt = msg;
+            }
+            hasPrompt = true;
+        }
+        else if (msg.role == "model" && hasPrompt)
+        {
+            if (conv.pairs.isEmpty() ||
+                conv.pairs.last().prompt.createTime != currentPrompt.createTime)
+            {
+                Conversation::PromptResponsePair pair;
+                pair.prompt = currentPrompt;
+                pair.responses.append(msg);
+                conv.pairs.append(pair);
+                if (!pair.prompt.driveDocumentId.isEmpty())
+                    Logger::instance().info(
+                        QString("[Attachment] Pair %1 created with docId='%2' text='%3'")
+                            .arg(conv.pairs.size() - 1)
+                            .arg(pair.prompt.driveDocumentId)
+                            .arg(pair.prompt.text.left(60)));
+            }
+            else
+            {
+                conv.pairs.last().responses.append(msg);
+            }
+        }
+    }
+
+    // Flush last prompt if no model response followed
+    if (hasPrompt)
+    {
+        bool found = false;
+        for (const auto &p : conv.pairs)
+        {
+            if (p.prompt.createTime == currentPrompt.createTime)
+            {
+                found = true;
+                break;
+            }
+        }
+        if (!found)
+        {
+            Conversation::PromptResponsePair pair;
+            pair.prompt = currentPrompt;
+            conv.pairs.append(pair);
+            if (!pair.prompt.driveDocumentId.isEmpty())
+                Logger::instance().info(
+                    QString("[Attachment] Final pair %1 (no response) with docId='%2'")
+                        .arg(conv.pairs.size() - 1)
+                        .arg(pair.prompt.driveDocumentId));
+        }
+    }
+}
+
+```
+
+
+// File: src\api\ConversationModel.h
+
+```h
+#pragma once
+
+#include <QObject>
+#include <QList>
+#include <QJsonObject>
+#include "models/Conversation.h"
+
+class ConversationModel : public QObject
+{
+    Q_OBJECT
+public:
+    explicit ConversationModel(QObject *parent = nullptr);
+
+    Conversation parseConversation(const QString &fileId, const QString &fileName,
+                                   const QJsonObject &root) const;
+
+private:
+    void buildPairs(Conversation &conv) const;
+};
+
+```
+
+
+// File: src\api\CopilotApi.cpp
+
+```cpp
+#include "CopilotApi.h"
+#include <QJsonDocument>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QNetworkRequest>
+#include <QNetworkReply>
+#include <QUrl>
+
+CopilotApi::CopilotApi(QObject *parent)
+    : QObject(parent)
+    , m_net(new QNetworkAccessManager(this))
+    , m_baseUrl("http://localhost:8000")
+{
+}
+
+void CopilotApi::setBaseUrl(const QString &url)
+{
+    m_baseUrl = url;
+}
+
+void CopilotApi::fetchModels()
+{
+    QUrl url(m_baseUrl + "/v1/models");
+    QNetworkRequest req(url);
+
+    auto *reply = m_net->get(req);
+    connect(reply, &QNetworkReply::finished, this, [this, reply]()
+    {
+        reply->deleteLater();
+
+        auto doc = QJsonDocument::fromJson(reply->readAll());
+
+        if (reply->error() != QNetworkReply::NoError)
+        {
+            QString errMsg = reply->errorString();
+            emit connectionFailed(errMsg);
+            return;
+        }
+        auto data = doc.object()["data"].toArray();
+        if (!data.isEmpty())
+        {
+            m_modelName = data.first().toObject()["id"].toString();
+            emit connected(m_modelName);
+        }
+        else
+        {
+            emit connectionFailed("No models returned");
+        }
+    });
+}
+
+void CopilotApi::sendMessage(const QString &prompt, const QString &conversationId)
+{
+    QJsonObject body;
+    body["model"] = m_modelName.isEmpty() ? "copilot" : m_modelName;
+    body["stream"] = false;
+
+    QJsonArray messages;
+    QJsonObject msg;
+    msg["role"] = "user";
+    msg["content"] = prompt;
+    messages.append(msg);
+    body["messages"] = messages;
+
+    if (!conversationId.isEmpty())
+        body["conversation_id"] = conversationId;
+
+    QUrl url(m_baseUrl + "/v1/chat/completions");
+    QNetworkRequest req(url);
+    req.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+    auto *reply = m_net->post(req, QJsonDocument(body).toJson());
+    connect(reply, &QNetworkReply::finished, this, [this, reply]()
+    {
+        reply->deleteLater();
+
+        auto doc = QJsonDocument::fromJson(reply->readAll());
+        auto root = doc.object();
+
+        if (reply->error() != QNetworkReply::NoError)
+        {
+            QString errMsg;
+            if (root.contains("error"))
+                errMsg = root["error"].toObject()["message"].toString();
+            else
+                errMsg = reply->errorString();
+
+            emit errorOccurred(errMsg);
+            return;
+        }
+
+        if (root.contains("error"))
+        {
+            QString errMsg = root["error"].toObject()["message"].toString();
+            emit errorOccurred(errMsg);
+            return;
+        }
+
+        QString content = root["choices"].toArray()
+            .first().toObject()["message"].toObject()["content"].toString();
+        QString convId = root["conversation_id"].toString();
+
+        emit responseReceived(content, convId);
+    });
+}
+
+```
+
+
+// File: src\api\CopilotApi.h
+
+```h
+#pragma once
+
+#include <QObject>
+#include <QNetworkAccessManager>
+#include <QString>
+
+class CopilotApi : public QObject
+{
+    Q_OBJECT
+public:
+    explicit CopilotApi(QObject *parent = nullptr);
+
+    void setBaseUrl(const QString &url);
+    void fetchModels();
+    void sendMessage(const QString &prompt, const QString &conversationId = QString());
+
+signals:
+    void connected(const QString &modelName);
+    void connectionFailed(const QString &error);
+    void responseReceived(const QString &content, const QString &conversationId);
+    void errorOccurred(const QString &error);
+
+private:
+    QNetworkAccessManager *m_net;
+    QString m_baseUrl;
+    QString m_modelName;
+};
+
+```
+
+
+// File: src\api\DriveApi.cpp
+
+```cpp
+#include "DriveApi.h"
+#include "app/Logger.h"
+#include <QJsonDocument>
+#include <QJsonArray>
+#include <QNetworkRequest>
+#include <QUrlQuery>
+#include <QDebug>
+
+DriveApi::DriveApi(QObject *parent)
+    : QObject(parent)
+    , m_net(new QNetworkAccessManager(this))
+{
+}
+
+void DriveApi::setAccessToken(const QString &token)
+{
+    m_token = token;
+}
+
+void DriveApi::sendGet(const QString &urlStr, std::function<void(const QJsonObject &)> callback)
+{
+    QUrl qurl(urlStr);
+    QNetworkRequest req(qurl);
+    req.setRawHeader("Authorization", ("Bearer " + m_token).toUtf8());
+    req.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
+
+    auto *reply = m_net->get(req);
+    handleReply(reply, callback);
+}
+
+void DriveApi::handleReply(QNetworkReply *reply, std::function<void(const QJsonObject &)> callback)
+{
+    connect(reply, &QNetworkReply::finished, this, [this, reply, callback]()
+    {
+        reply->deleteLater();
+
+        int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+
+        if (status == 401)
+        {
+            PendingRequest pending;
+            pending.url = reply->url().toString();
+            pending.callback = callback;
+            m_pendingRequests.append(pending);
+            emit tokenNeedsRefresh();
+            return;
+        }
+
+        if (reply->error() != QNetworkReply::NoError)
+        {
+            qWarning() << "Drive API error:" << reply->errorString();
+            return;
+        }
+
+        auto doc = QJsonDocument::fromJson(reply->readAll());
+        callback(doc.object());
+    });
+}
+
+void DriveApi::retryPendingRequests()
+{
+    int count = m_pendingRequests.size();
+    QList<PendingRequest> retries = m_pendingRequests;
+    m_pendingRequests.clear();
+    for (const auto &pending : retries)
+        sendGet(pending.url, pending.callback);
+}
+
+void DriveApi::findFolder(const QString &folderName)
+{
+    QUrlQuery query;
+    query.addQueryItem("q", QString("name='%1' and mimeType='application/vnd.google-apps.folder' and trashed=false").arg(folderName));
+    query.addQueryItem("fields", "files(id,name)");
+    query.addQueryItem("pageSize", "10");
+
+    QUrl url("https://www.googleapis.com/drive/v3/files");
+    url.setQuery(query);
+
+    sendGet(url.toString(), [this](const QJsonObject &response)
+    {
+        auto files = response["files"].toArray();
+        if (files.isEmpty())
+            emit folderNotFound();
+        else
+            emit folderFound(files.first().toObject()["id"].toString());
+    });
+}
+
+void DriveApi::listConversations(const QString &folderId)
+{
+    QUrlQuery query;
+    query.addQueryItem("q", QString("'%1' in parents and trashed=false").arg(folderId));
+    query.addQueryItem("fields", "files(id,name,modifiedTime)");
+    query.addQueryItem("orderBy", "modifiedTime desc");
+    query.addQueryItem("pageSize", "1000");
+
+    QUrl url("https://www.googleapis.com/drive/v3/files");
+    url.setQuery(query);
+
+    sendGet(url.toString(), [this](const QJsonObject &response)
+    {
+        QList<QPair<QString, QString>> files;
+        for (const auto &f : response["files"].toArray())
+        {
+            auto obj = f.toObject();
+            files.append({obj["id"].toString(), obj["name"].toString()});
+        }
+        emit conversationListReady(files);
+    });
+}
+
+void DriveApi::downloadConversation(const QString &fileId, const QString &fileName)
+{
+    QUrl url(QString("https://www.googleapis.com/drive/v3/files/%1?alt=media").arg(fileId));
+    QNetworkRequest req(url);
+    req.setRawHeader("Authorization", ("Bearer " + m_token).toUtf8());
+    req.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
+
+    auto *reply = m_net->get(req);
+    connect(reply, &QNetworkReply::finished, this, [this, reply, fileId, fileName]()
+    {
+        reply->deleteLater();
+
+        int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        if (status == 401)
+        {
+            PendingRequest pending;
+            pending.url = reply->url().toString();
+            pending.callback = [this, fileId, fileName](const QJsonObject &data)
+            {
+                emit conversationDownloaded(fileId, fileName, data);
+            };
+            m_pendingRequests.append(pending);
+            emit tokenNeedsRefresh();
+            return;
+        }
+
+        if (reply->error() != QNetworkReply::NoError)
+        {
+            emit apiError("Download failed: " + reply->errorString());
+            return;
+        }
+        auto doc = QJsonDocument::fromJson(reply->readAll());
+        emit conversationDownloaded(fileId, fileName, doc.object());
+    });
+}
+
+void DriveApi::downloadAttachment(const QString &fileId)
+{
+    Logger::instance().info(
+        QString("[Attachment] downloadAttachment: fileId='%1'").arg(fileId));
+    QUrl url(QString("https://www.googleapis.com/drive/v3/files/%1?alt=media").arg(fileId));
+    QNetworkRequest req(url);
+    req.setRawHeader("Authorization", ("Bearer " + m_token).toUtf8());
+    req.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
+
+    auto *reply = m_net->get(req);
+    connect(reply, &QNetworkReply::finished, this, [this, reply, fileId]()
+    {
+        reply->deleteLater();
+
+        int status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        if (status == 401)
+        {
+            PendingRequest pending;
+            pending.url = reply->url().toString();
+            pending.callback = [this, fileId](const QJsonObject &)
+            {
+                downloadAttachment(fileId);
+            };
+            m_pendingRequests.append(pending);
+            emit tokenNeedsRefresh();
+            return;
+        }
+
+        if (reply->error() != QNetworkReply::NoError)
+        {
+            Logger::instance().error(
+                QString("[Attachment] downloadAttachment failed: fileId='%1' error='%2'")
+                    .arg(fileId, reply->errorString()));
+            emit apiError("Attachment download failed: " + reply->errorString());
+            return;
+        }
+        QString mime = reply->header(QNetworkRequest::ContentTypeHeader).toString();
+        QByteArray data = reply->readAll();
+        Logger::instance().info(
+            QString("[Attachment] downloadAttachment OK: fileId='%1' mime='%2' size=%3")
+                .arg(fileId, mime).arg(data.size()));
+        emit attachmentDownloaded(fileId, data, mime);
+    });
+}
+
+```
+
+
+// File: src\api\DriveApi.h
+
+```h
+#pragma once
+
+#include <QObject>
+#include <QNetworkAccessManager>
+#include <QList>
+#include <QJsonObject>
+#include <QNetworkReply>
+#include <functional>
+
+class DriveApi : public QObject
+{
+    Q_OBJECT
+public:
+    explicit DriveApi(QObject *parent = nullptr);
+
+    void setAccessToken(const QString &token);
+
+    void findFolder(const QString &folderName);
+    void listConversations(const QString &folderId);
+    void downloadConversation(const QString &fileId, const QString &fileName);
+    void downloadAttachment(const QString &fileId);
+
+    void retryPendingRequests();
+
+signals:
+    void folderFound(const QString &folderId);
+    void folderNotFound();
+    void conversationListReady(const QList<QPair<QString, QString>> &files);
+    void conversationDownloaded(const QString &fileId, const QString &fileName, const QJsonObject &data);
+    void attachmentDownloaded(const QString &fileId, const QByteArray &data, const QString &mimeType);
+    void apiError(const QString &error);
+    void tokenNeedsRefresh();
+
+private:
+    struct PendingRequest
+    {
+        QString url;
+        std::function<void(const QJsonObject &)> callback;
+    };
+
+    void sendGet(const QString &url, std::function<void(const QJsonObject &)> callback);
+    void handleReply(QNetworkReply *reply, std::function<void(const QJsonObject &)> callback);
+
+    QNetworkAccessManager *m_net;
+    QString m_token;
+    QList<PendingRequest> m_pendingRequests;
+};
+
+```
+
+
+// Directory: src\app
+
+// File: src\app\Application.cpp
+
+```cpp
+#include "Application.h"
+
+Application::Application(int &argc, char **argv)
+    : QApplication(argc, argv)
+    , m_settings("GoogleAIViewer", "GoogleAIViewer")
+{
+}
+
+void Application::init()
+{
+    setApplicationName("Google AI Studio Viewer");
+    setApplicationVersion("1.0.0");
+    setOrganizationName("GoogleAIViewer");
+}
+
+QSettings &Application::settings()
+{
+    return m_settings;
+}
+
+```
+
+
+// File: src\app\Application.h
+
+```h
+#pragma once
+
+#include <QApplication>
+#include <QSettings>
+
+class Application : public QApplication
+{
+    Q_OBJECT
+public:
+    Application(int &argc, char **argv);
+    void init();
+
+    QSettings &settings();
+
+private:
+    QSettings m_settings;
+};
+
+```
+
+
+// File: src\app\AuthManager.cpp
+
+```cpp
+#include "AuthManager.h"
+#include "Application.h"
+#include <QDesktopServices>
+#include <QJsonDocument>
+#include <QJsonArray>
+#include <QUrlQuery>
+#include <QNetworkReply>
+#include <QSettings>
+#include <QApplication>
+#include <QFile>
+#include <QDebug>
+
+AuthManager::AuthManager(QObject *parent)
+    : QObject(parent)
+    , m_net(new QNetworkAccessManager(this))
+{
+}
+
+bool AuthManager::isAuthenticated() const
+{
+    return !m_accessToken.isEmpty();
+}
+
+QString AuthManager::accessToken() const { return m_accessToken; }
+
+int AuthManager::expiresIn() const { return m_expiresIn; }
+
+void AuthManager::loadConfig(const QString &configPath)
+{
+    QFile f(configPath);
+    if (!f.open(QIODevice::ReadOnly))
+    {
+        emit authFailed("Could not open config file: " + configPath);
+        return;
+    }
+    auto doc = QJsonDocument::fromJson(f.readAll());
+    f.close();
+
+    // Support both root-level keys and the "installed" wrapper from Google Cloud download
+    QJsonObject obj = doc.object();
+    bool isGoogleFormat = obj.contains("installed");
+    if (isGoogleFormat)
+        obj = obj["installed"].toObject();
+
+    m_clientId = obj["client_id"].toString();
+    m_clientSecret = obj["client_secret"].toString();
+
+    // For the Google download format, force OOB redirect (our auth flow)
+    m_redirectUri = obj["redirect_uri"].toString();
+    if (m_redirectUri.isEmpty())
+        m_redirectUri = "urn:ietf:wg:oauth:2.0:oob";
+
+    m_scopes << "https://www.googleapis.com/auth/drive.readonly";
+
+    loadSavedTokens();
+}
+
+void AuthManager::setCredentials(const QString &clientId, const QString &clientSecret)
+{
+    m_clientId = clientId;
+    m_clientSecret = clientSecret;
+    m_redirectUri = "urn:ietf:wg:oauth:2.0:oob";
+    m_scopes << "https://www.googleapis.com/auth/drive.readonly";
+
+    loadSavedTokens();
+}
+
+void AuthManager::loadSavedTokens()
+{
+    auto *app = qobject_cast<Application *>(qApp);
+    if (!app)
+        return;
+
+    QSettings &s = app->settings();
+    m_refreshToken = s.value("auth/refresh_token").toString();
+    m_accessToken = s.value("auth/access_token").toString();
+    m_expiresIn = s.value("auth/expires_in").toInt();
+
+    QString acquiredStr = s.value("auth/token_acquired_at").toString();
+    if (!acquiredStr.isEmpty())
+        m_tokenAcquiredAt = QDateTime::fromString(acquiredStr, Qt::ISODate);
+
+    if (!m_accessToken.isEmpty() && m_tokenAcquiredAt.isValid())
+    {
+        qint64 elapsedSec = m_tokenAcquiredAt.secsTo(QDateTime::currentDateTimeUtc());
+        int remainingSec = m_expiresIn - static_cast<int>(elapsedSec);
+        if (remainingSec <= 60)
+        {
+            m_accessToken.clear();
+        }
+    }
+}
+
+void AuthManager::authenticate()
+{
+    if (m_clientId.isEmpty())
+    {
+        emit authFailed("Client ID not configured. Edit config/oauth_config.json");
+        return;
+    }
+
+    // If we already have a valid access token, nothing to do
+    if (!m_accessToken.isEmpty())
+    {
+        int remainingSec = m_expiresIn;
+        if (m_tokenAcquiredAt.isValid())
+        {
+            qint64 elapsedSec = m_tokenAcquiredAt.secsTo(QDateTime::currentDateTimeUtc());
+            remainingSec = m_expiresIn - static_cast<int>(elapsedSec);
+        }
+        int hours = remainingSec / 3600;
+        int mins = (remainingSec % 3600) / 60;
+        emit authSuccess(
+            QString("Authenticated. Token expires in %1h %2m.").arg(hours).arg(mins));
+        return;
+    }
+
+    // If we already have a refresh token stored from a previous authorization,
+    // exchange it for a new access token rather than starting from scratch.
+    if (!m_refreshToken.isEmpty())
+    {
+        refreshAccessToken();
+        return;
+    }
+
+    QString url = buildAuthUrl();
+    QDesktopServices::openUrl(QUrl(url));
+    emit authCodeRequired(url);
+}
+
+void AuthManager::submitAuthCode(const QString &code)
+{
+    exchangeCodeForTokens(code);
+}
+
+void AuthManager::refreshAccessToken()
+{
+    if (m_refreshToken.isEmpty())
+    {
+        emit authFailed("No refresh token available");
+        return;
+    }
+
+    QUrl url("https://oauth2.googleapis.com/token");
+    QNetworkRequest req(url);
+    req.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
+    req.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
+
+    QUrlQuery body;
+    body.addQueryItem("client_id", m_clientId);
+    body.addQueryItem("client_secret", m_clientSecret);
+    body.addQueryItem("refresh_token", m_refreshToken);
+    body.addQueryItem("grant_type", "refresh_token");
+
+    auto *reply = m_net->post(req, body.toString(QUrl::FullyEncoded).toUtf8());
+    connect(reply, &QNetworkReply::finished, this, [this, reply]()
+            {
+                reply->deleteLater();
+                auto responseBody = reply->readAll();
+                if (reply->error() != QNetworkReply::NoError)
+                {
+                    // If the refresh token is invalid or expired, clear it so the
+                    // user can start from scratch next time.
+                    signOut();
+                    QString errMsg = "Token refresh failed: " + reply->errorString();
+                    auto doc = QJsonDocument::fromJson(responseBody);
+                    if (!doc.isNull() && doc.object().contains("error"))
+                        errMsg += "\n" + doc.object()["error_description"].toString();
+                    emit authFailed(errMsg);
+                    return;
+                }
+                auto doc = QJsonDocument::fromJson(responseBody);
+                auto obj = doc.object();
+                QString access = obj["access_token"].toString();
+                int expiresIn = obj["expires_in"].toInt();
+                storeTokens(access, QString(), expiresIn);
+                int hours = expiresIn / 3600;
+                int mins = (expiresIn % 3600) / 60;
+                emit tokenRefreshed();
+                emit authSuccess(
+                    QString("Token refreshed. Expires in %1h %2m.").arg(hours).arg(mins));
+            });
+}
+
+void AuthManager::signOut()
+{
+    m_accessToken.clear();
+    m_refreshToken.clear();
+    m_expiresIn = 0;
+    m_tokenAcquiredAt = QDateTime();
+    auto *app = qobject_cast<Application *>(qApp);
+    if (app)
+    {
+        QSettings &s = app->settings();
+        s.remove("auth/refresh_token");
+        s.remove("auth/access_token");
+        s.remove("auth/expires_in");
+        s.remove("auth/token_acquired_at");
+        s.sync();
+    }
+}
+
+void AuthManager::exchangeCodeForTokens(const QString &code)
+{
+    QUrl url("https://oauth2.googleapis.com/token");
+    QNetworkRequest req(url);
+    req.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
+    req.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
+
+    QUrlQuery body;
+    body.addQueryItem("code", code);
+    body.addQueryItem("client_id", m_clientId);
+    body.addQueryItem("client_secret", m_clientSecret);
+    body.addQueryItem("redirect_uri", m_redirectUri);
+    body.addQueryItem("grant_type", "authorization_code");
+
+    auto *reply = m_net->post(req, body.toString(QUrl::FullyEncoded).toUtf8());
+    connect(reply, &QNetworkReply::finished, this, [this, reply]()
+    {
+        reply->deleteLater();
+        auto responseBody = reply->readAll();
+        if (reply->error() != QNetworkReply::NoError)
+        {
+            QString errMsg = "Token exchange failed: " + reply->errorString();
+            auto doc = QJsonDocument::fromJson(responseBody);
+            if (!doc.isNull() && doc.object().contains("error"))
+                errMsg += "\n" + doc.object()["error_description"].toString();
+            emit authFailed(errMsg);
+            return;
+        }
+        auto doc = QJsonDocument::fromJson(responseBody);
+        auto obj = doc.object();
+        QString access = obj["access_token"].toString();
+        QString refresh = obj["refresh_token"].toString();
+        int expiresIn = obj["expires_in"].toInt();
+        storeTokens(access, refresh, expiresIn);
+        int hours = expiresIn / 3600;
+        int mins = (expiresIn % 3600) / 60;
+        emit authSuccess(
+            QString("Authenticated. Token expires in %1h %2m.").arg(hours).arg(mins));
+    });
+}
+
+void AuthManager::storeTokens(const QString &access, const QString &refresh, int expiresIn)
+{
+    m_accessToken = access;
+    m_expiresIn = expiresIn;
+    m_tokenAcquiredAt = QDateTime::currentDateTimeUtc();
+
+    if (!refresh.isEmpty())
+        m_refreshToken = refresh;
+
+    // Always persist tokens
+    auto *app = qobject_cast<Application *>(qApp);
+    if (app)
+    {
+        QSettings &s = app->settings();
+        s.setValue("auth/access_token", m_accessToken);
+        s.setValue("auth/expires_in", m_expiresIn);
+        s.setValue("auth/token_acquired_at", m_tokenAcquiredAt.toString(Qt::ISODate));
+        if (!refresh.isEmpty())
+            s.setValue("auth/refresh_token", m_refreshToken);
+        s.sync();
+    }
+}
+
+QString AuthManager::buildAuthUrl() const
+{
+    QUrlQuery query;
+    query.addQueryItem("client_id", m_clientId);
+    query.addQueryItem("redirect_uri", m_redirectUri);
+    query.addQueryItem("response_type", "code");
+    query.addQueryItem("scope", m_scopes.join(" "));
+    query.addQueryItem("access_type", "offline");
+    query.addQueryItem("prompt", "consent");
+
+    QUrl url("https://accounts.google.com/o/oauth2/v2/auth");
+    url.setQuery(query);
+    return url.toString();
+}
+
+```
+
+
+// File: src\app\AuthManager.h
+
+```h
+#pragma once
+
+#include <QObject>
+#include <QString>
+#include <QJsonObject>
+#include <QNetworkAccessManager>
+#include <QDateTime>
+
+class AuthManager : public QObject
+{
+    Q_OBJECT
+public:
+    explicit AuthManager(QObject *parent = nullptr);
+
+    bool isAuthenticated() const;
+    QString accessToken() const;
+    int expiresIn() const;
+
+    void loadConfig(const QString &configPath);
+    void setCredentials(const QString &clientId, const QString &clientSecret);
+    void authenticate();
+    void refreshAccessToken();
+    void signOut();
+    void submitAuthCode(const QString &code);
+
+signals:
+    void authSuccess(const QString &message);
+    void authFailed(const QString &error);
+    void tokenRefreshed();
+    void authCodeRequired(const QString &authUrl);
+
+private:
+    void exchangeCodeForTokens(const QString &code);
+    void storeTokens(const QString &access, const QString &refresh, int expiresIn);
+    void loadSavedTokens();
+    QString buildAuthUrl() const;
+
+    QNetworkAccessManager *m_net;
+
+    QString m_clientId;
+    QString m_clientSecret;
+    QString m_redirectUri;
+    QStringList m_scopes;
+
+    QString m_accessToken;
+    QString m_refreshToken;
+    int m_expiresIn = 0;
+    QDateTime m_tokenAcquiredAt;
+};
+
+```
+
+
+// File: src\app\Logger.cpp
+
+```cpp
+#include "Logger.h"
+#include <QDir>
+#include <QTextStream>
+#include <QMutexLocker>
+#include <iostream>
+#include <QApplication>
+
+//#define NO_LOGGING
+
+Logger::~Logger()
+{
+    QMutexLocker lock(&m_mutex);
+    if (m_file.isOpen())
+        m_file.close();
+}
+
+Logger &Logger::instance()
+{
+    static Logger s;
+    return s;
+}
+
+void Logger::init(const QString &filePath)
+{
+
+#ifdef NO_LOGGING
+    return;
+#endif
+    QMutexLocker lock(&m_mutex);
+    QDir().mkpath(QFileInfo(filePath).absolutePath());
+
+    if (m_file.isOpen())
+        m_file.close();
+
+    m_file.setFileName(filePath);
+    m_file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text);
+}
+
+void Logger::log(Level level, const QString &message)
+{
+#ifdef NO_LOGGING
+    return;
+#endif
+    QMutexLocker lock(&m_mutex);
+
+    QString line = QString("[%1] [%2] %3\n")
+        .arg(QDateTime::currentDateTime().toString("yyyy-MM-dd hh:mm:ss.zzz"))
+        .arg(levelName(level))
+        .arg(message);
+
+    if (m_file.isOpen())
+    {
+        m_file.write(line.toUtf8());
+        m_file.flush();
+    }
+
+    // Also print to stderr for immediate visibility
+    std::cerr << line.toStdString();
+}
+
+QString Logger::levelName(Level level)
+{
+    switch (level)
+    {
+    case Debug:   return "DEBUG";
+    case Info:    return "INFO";
+    case Warning: return "WARN";
+    case Error:   return "ERROR";
+    }
+    return "UNKNOWN";
+}
+
+```
+
+
+// File: src\app\Logger.h
+
+```h
+#pragma once
+
+#include <QString>
+#include <QFile>
+#include <QMutex>
+#include <QDateTime>
+
+class Logger
+{
+public:
+    enum Level { Debug, Info, Warning, Error };
+
+    static Logger &instance();
+
+    void init(const QString &filePath);
+    void log(Level level, const QString &message);
+    void debug(const QString &message) { log(Debug, message); }
+    void info(const QString &message)  { log(Info, message); }
+    void warn(const QString &message)  { log(Warning, message); }
+    void error(const QString &message) { log(Error, message); }
+
+    static QString levelName(Level level);
+
+private:
+    Logger() = default;
+    ~Logger();
+    Logger(const Logger &) = delete;
+    Logger &operator=(const Logger &) = delete;
+
+    QFile m_file;
+    QMutex m_mutex;
+};
+
+```
+
+
+// File: src\app\patch.diff
+
+```diff
+--- AuthManager.cpp
++++ AuthManager.cpp
+@@ -62,6 +62,13 @@
+         return;
+     }
+ 
++    // If we already have a refresh token stored from a previous authorization, 
++    // exchange it for a new access token rather than starting from scratch.
++    if (!m_refreshToken.isEmpty())
++    {
++        refreshAccessToken();
++        return;
++    }
++
+     QString url = buildAuthUrl();
+     QDesktopServices::openUrl(QUrl(url));
+@@ -103,6 +110,9 @@
+         reply->deleteLater();
+         if (reply->error() != QNetworkReply::NoError)
+         {
++            // If the refresh token is invalid or expired, clear it so the 
++            // user can start from scratch next time.
++            signOut();
+             emit authFailed("Token refresh failed: " + reply->errorString());
+             return;
+         }
+@@ -112,6 +122,7 @@
+         m_accessToken = obj["access_token"].toString();
+         m_expiresIn = obj["expires_in"].toInt();
+         emit tokenRefreshed();
++        emit authSuccess(); // Let the app know that authentication via refresh succeeded
+     });
+ }
+ 
+```
+
+
+// File: src\main.cpp
+
+```cpp
+#include <QApplication>
+#include "app/Application.h"
+#include "app/Logger.h"
+#include "ui/MainWindow.h"
+#include <QDir>
+
+int main(int argc, char *argv[])
+{  
+    Application app(argc, argv);
+    app.init();
+
+    QString logPath = QDir(QCoreApplication::applicationDirPath())
+        .filePath("GoogleAIViewer.log");
+    Logger::instance().init(logPath);
+
+    MainWindow window;
+    window.setWindowTitle("Google AI Studio Viewer");
+    window.resize(1200, 800);
+    window.show();
+
+    int ret = app.exec();
+    return ret;
+}
+
+```
+
+
+// Directory: src\models
+
+// File: src\models\Conversation.cpp
+
+```cpp
+#include "Conversation.h"
+
+int Conversation::totalTokenCount() const
+{
+    int total = 0;
+    for (const auto &m : messages)
+        total += m.tokenCount;
+    return total;
+}
+
+QString Conversation::displayTitle() const
+{
+    if (!fileName.isEmpty())
+        return fileName;
+
+    for (const auto &m : messages)
+    {
+        if (!m.text.isEmpty())
+        {
+            QString preview = m.text.left(80);
+            if (m.text.length() > 80)
+                preview += "...";
+            return preview;
+        }
+    }
+    return "Untitled";
+}
+
+QDateTime Conversation::lastMessageTime() const
+{
+    if (messages.isEmpty())
+        return QDateTime();
+    return messages.last().createTime;
+}
+
+```
+
+
+// File: src\models\Conversation.h
+
+```h
+#pragma once
+
+#include <QString>
+#include <QList>
+#include <QJsonObject>
+#include <QDateTime>
+#include "Message.h"
+
+struct Conversation
+{
+    QString fileId;
+    QString fileName;
+    QDateTime lastModified;
+
+    // Run settings
+    QString model;
+    double temperature = 1.0;
+    double topP = 0.95;
+    int topK = 64;
+    int maxOutputTokens = 8192;
+    QJsonObject systemInstruction;
+
+    // All chunks parsed as flat messages
+    QList<Message> messages;
+
+    // Paired: each user message → subsequent model response(s)
+    struct PromptResponsePair
+    {
+        Message prompt;
+        QList<Message> responses;
+    };
+    QList<PromptResponsePair> pairs;
+
+    int totalTokenCount() const;
+    QString displayTitle() const;
+    QDateTime lastMessageTime() const;
+};
+
+```
+
+
+// File: src\models\FileAttachment.cpp
+
+```cpp
+#include "FileAttachment.h"
+// FileAttachment is a plain struct; no .cpp logic needed yet.
+
+```
+
+
+// File: src\models\FileAttachment.h
+
+```h
+#pragma once
+
+#include <QString>
+#include <QByteArray>
+
+struct FileAttachment
+{
+    QString id;
+    QString name;
+    QString mimeType;
+    QByteArray content;
+};
+
+```
+
+
+// File: src\models\Message.cpp
+
+```cpp
+#include "Message.h"
+#include <QJsonDocument>
+
+Message Message::fromJson(const QJsonObject &obj)
+{
+    Message m;
+    m.text = obj["text"].toString();
+    m.role = obj["role"].toString();
+    m.tokenCount = obj["tokenCount"].toInt();
+    m.isThought = obj["isThought"].toBool(false);
+    m.finishReason = obj["finishReason"].toString();
+    m.parts = obj["parts"].toArray();
+
+    // Parse createTime — handle Z suffix robustly
+    QString ts = obj["createTime"].toString();
+    m.createTime = QDateTime::fromString(ts, Qt::ISODateWithMs);
+    if (!m.createTime.isValid() && ts.endsWith('Z'))
+        m.createTime = QDateTime::fromString(ts.chopped(1) + "+00:00", Qt::ISODateWithMs);
+
+    if (obj.contains("driveDocument"))
+    {
+        QJsonObject dd = obj["driveDocument"].toObject();
+        m.driveDocumentId = dd["id"].toString();
+    }
+    else if (obj.contains("driveImage"))
+    {
+        QJsonObject di = obj["driveImage"].toObject();
+        m.driveDocumentId = di["id"].toString();
+    }
+
+    // Check parts for inline image data (pasted images)
+    for (int i = 0; i < m.parts.size(); ++i)
+    {
+        QJsonObject part = m.parts[i].toObject();
+        QStringList keys = part.keys();
+
+        if (part.contains("inlineData"))
+        {
+            QJsonObject inlineData = part["inlineData"].toObject();
+            m.inlineImageMime = inlineData["mimeType"].toString();
+            m.inlineImageData = inlineData["data"].toString();
+        }
+    }
+
+    return m;
+}
+
+```
+
+
+// File: src\models\Message.h
+
+```h
+#pragma once
+
+#include <QString>
+#include <QJsonObject>
+#include <QJsonArray>
+#include <QDateTime>
+
+struct Message
+{
+    QString text;
+    QString role;               // "user" or "model"
+    int tokenCount = 0;
+    QDateTime createTime;
+    bool isThought = false;
+    QString finishReason;
+    QString driveDocumentId;     // non-empty if this chunk is a file upload
+    QString inlineImageData;     // base64-encoded inline image data
+    QString inlineImageMime;     // mime type of inline image
+    QJsonArray parts;           // raw parts array for thought signatures etc.
+
+    static Message fromJson(const QJsonObject &obj);
+};
+
+```
+
+
+// Directory: src\ui
+
+// File: src\ui\ConversationListPane.cpp
+
+```cpp
+#include "ConversationListPane.h"
+#include "app/Logger.h"
+#include <QVBoxLayout>
+#include <QLabel>
+#include <algorithm>
+
+ConversationListPane::ConversationListPane(QWidget *parent)
+    : QWidget(parent)
+    , m_list(new QListWidget(this))
+{
+    auto *layout = new QVBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+    auto *header = new QLabel("Conversations", this);
+    header->setStyleSheet("font-weight: bold; padding: 4px;");
+    layout->addWidget(header);
+    layout->addWidget(m_list);
+
+    connect(m_list, &QListWidget::currentRowChanged, this, [this](int row)
+    {
+        if (row >= 0 && row < m_rowToConv.size())
+        {
+            int convIndex = m_rowToConv[row];
+            emit conversationSelected(convIndex);
+        }
+    });
+}
+
+bool ConversationListPane::isValidConv(const Conversation &conv) const
+{
+    return true;
+}
+
+void ConversationListPane::setFileList(const QList<QPair<QString, QString>> &files)
+{
+    Logger::instance().debug(QString("[ConvList] setFileList: received %1 files").arg(files.size()));
+    m_fileList = files;
+    m_conversations.clear();
+    for (const auto &f : files)
+    {
+        Logger::instance().debug(QString("[ConvList] Creating stub: fileId=%1 fileName=%2").arg(f.first, f.second));
+        Conversation stub;
+        stub.fileId = f.first;
+        stub.fileName = f.second;
+        m_conversations.append(stub);
+    }
+    refreshList();
+}
+
+void ConversationListPane::addConversation(const Conversation &conv)
+{
+    Logger::instance().debug(QString("[ConvList] addConversation: fileId=%1 fileName=%2 model=%3 messages=%4 pairs=%5")
+        .arg(conv.fileId, conv.fileName, conv.model)
+        .arg(conv.messages.size())
+        .arg(conv.pairs.size()));
+
+    for (int i = 0; i < m_conversations.size(); ++i)
+    {
+        if (m_conversations[i].fileId == conv.fileId)
+        {
+            Logger::instance().debug(QString("[ConvList] Updating existing stub at index %1").arg(i));
+            m_conversations[i] = conv;
+            refreshList();
+            return;
+        }
+    }
+
+    Logger::instance().debug("[ConvList] Appending new conversation (not a stub)");
+    m_conversations.append(conv);
+    m_filesPopulated++;
+    refreshList();
+}
+
+void ConversationListPane::clear()
+{
+    m_conversations.clear();
+    m_rowToConv.clear();
+    m_fileList.clear();
+    m_list->clear();
+    m_filesPopulated = 0;
+}
+
+int ConversationListPane::conversationCount() const
+{
+    return m_conversations.size();
+}
+
+const Conversation &ConversationListPane::conversationAt(int index) const
+{
+    return m_conversations.at(index);
+}
+
+QList<Conversation> ConversationListPane::allConversations() const
+{
+    return m_conversations;
+}
+
+void ConversationListPane::refreshList()
+{
+    applySort();
+
+    m_list->blockSignals(true);
+    m_list->clear();
+    m_rowToConv.clear();
+
+    Logger::instance().debug(QString("[ConvList] refreshList: rendering %1 conversations").arg(m_conversations.size()));
+
+    for (int i = 0; i < m_conversations.size(); ++i)
+    {
+        const auto &conv = m_conversations[i];
+
+        if (!isValidConv(conv)) continue;
+
+        m_rowToConv.append(i);
+        QString title = conv.displayTitle();
+        bool isDownloaded = !conv.model.isEmpty() || !conv.messages.isEmpty();
+
+        Logger::instance().debug(QString("[ConvList] Item %1 fileId=%2 title='%3' isDownloaded=%4 messages=%5 model='%6'")
+            .arg(i)
+            .arg(conv.fileId)
+            .arg(title)
+            .arg(isDownloaded ? "true" : "false")
+            .arg(conv.messages.size())
+            .arg(conv.model));
+
+        QString labelText;
+        if (isDownloaded)
+        {
+            int tok = conv.totalTokenCount();
+            QString modelShort = conv.model.section('/', -1);
+            QString dateStr = conv.lastMessageTime().isValid()
+                ? conv.lastMessageTime().toLocalTime().toString("yyyy-MM-dd hh:mm:ss")
+                : "";
+
+            labelText = QString("%1\n[%2] %3 tok  %4")
+                            .arg(title, modelShort).arg(tok).arg(dateStr);
+        }
+        else
+        {
+            labelText = QString("%1\n[Click to load...]").arg(title);
+        }
+
+        Logger::instance().debug(QString("[ConvList] Label text: %1").arg(labelText));
+
+        auto *item = new QListWidgetItem(labelText);
+        item->setToolTip(conv.fileName);
+        m_list->addItem(item);
+    }
+
+    m_list->blockSignals(false);
+}
+
+void ConversationListPane::applySort()
+{
+    switch (m_sortMode)
+    {
+    case NewestFirst:
+        std::sort(m_conversations.begin(), m_conversations.end(),
+            [](const Conversation &a, const Conversation &b)
+            {
+                auto ta = a.messages.isEmpty() ? QDateTime() : a.messages.last().createTime;
+                auto tb = b.messages.isEmpty() ? QDateTime() : b.messages.last().createTime;
+                return ta > tb;
+            });
+        break;
+    case OldestFirst:
+        std::sort(m_conversations.begin(), m_conversations.end(),
+            [](const Conversation &a, const Conversation &b)
+            {
+                auto ta = a.messages.isEmpty() ? QDateTime() : a.messages.last().createTime;
+                auto tb = b.messages.isEmpty() ? QDateTime() : b.messages.last().createTime;
+                return ta < tb;
+            });
+        break;
+    case AlphaAZ:
+        std::sort(m_conversations.begin(), m_conversations.end(),
+            [](const Conversation &a, const Conversation &b)
+            { return a.fileName.toLower() < b.fileName.toLower(); });
+        break;
+    case AlphaZA:
+        std::sort(m_conversations.begin(), m_conversations.end(),
+            [](const Conversation &a, const Conversation &b)
+            { return a.fileName.toLower() > b.fileName.toLower(); });
+        break;
+    }
+}
+
+void ConversationListPane::sortBy(SortMode mode)
+{
+    m_sortMode = mode;
+    applySort();
+    refreshList();
+}
+
+```
+
+
+// File: src\ui\ConversationListPane.h
+
+```h
+#pragma once
+
+#include <QWidget>
+#include <QListWidget>
+#include <QList>
+#include "models/Conversation.h"
+
+class ConversationListPane : public QWidget
+{
+    Q_OBJECT
+public:
+    enum SortMode { NewestFirst, OldestFirst, AlphaAZ, AlphaZA };
+
+    explicit ConversationListPane(QWidget *parent = nullptr);
+
+    void setFileList(const QList<QPair<QString, QString>> &files);
+    void addConversation(const Conversation &conv);
+    void clear();
+    int conversationCount() const;
+    const Conversation &conversationAt(int index) const;
+    QList<Conversation> allConversations() const;
+
+    void sortBy(SortMode mode);
+
+signals:
+    void conversationSelected(int index);
+
+private:
+    void refreshList();
+    void applySort();
+    bool isValidConv(const Conversation &conv) const;
+
+    QListWidget *m_list;
+    QList<Conversation> m_conversations;
+    QList<int> m_rowToConv;  // visual row → m_conversations index
+    QList<QPair<QString, QString>> m_fileList;
+    SortMode m_sortMode = NewestFirst;
+    int m_filesPopulated = 0;
+};
+
+```
+
+
+// File: src\ui\FilePreviewWidget.cpp
+
+```cpp
+#include "FilePreviewWidget.h"
+#include "ImageViewerDialog.h"
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QFileDialog>
+#include <QMessageBox>
+#include <QMouseEvent>
+#include <QCursor>
+
+FilePreviewWidget::FilePreviewWidget(const QString &fileId, QWidget *parent)
+    : QWidget(parent)
+    , m_fileId(fileId)
+    , m_stack(new QStackedWidget(this))
+    , m_textView(new QPlainTextEdit(this))
+    , m_imageView(new QLabel(this))
+    , m_nameLabel(new QLabel("File: " + fileId, this))
+    , m_downloadBtn(new QPushButton("Save As...", this))
+    , m_viewBtn(new QPushButton("View Full Size", this))
+    , m_zoomInBtn(new QPushButton("+", this))
+    , m_zoomOutBtn(new QPushButton("-", this))
+    , m_fitBtn(new QPushButton("Fit", this))
+{
+    auto *layout = new QVBoxLayout(this);
+    layout->setContentsMargins(4, 4, 4, 4);
+
+    auto *header = new QHBoxLayout;
+    header->addWidget(m_nameLabel);
+    header->addStretch();
+    header->addWidget(m_viewBtn);
+    header->addWidget(m_downloadBtn);
+    layout->addLayout(header);
+
+    // Image toolbar (hidden by default)
+    m_imageToolbar = new QWidget(this);
+    auto *imageToolbarLayout = new QHBoxLayout(m_imageToolbar);
+    imageToolbarLayout->setContentsMargins(0, 0, 0, 0);
+    imageToolbarLayout->addWidget(m_zoomOutBtn);
+    imageToolbarLayout->addWidget(m_fitBtn);
+    imageToolbarLayout->addWidget(m_zoomInBtn);
+    imageToolbarLayout->addStretch();
+    m_imageToolbar->setVisible(false);
+    layout->addWidget(m_imageToolbar);
+
+    m_textView->setReadOnly(true);
+    m_textView->setFont(QFont("monospace", 10));
+    m_textView->setMaximumHeight(300);
+
+    m_imageView->setAlignment(Qt::AlignCenter);
+    m_imageView->setMaximumHeight(400);
+    m_imageView->setCursor(Qt::PointingHandCursor);
+    m_imageView->setToolTip("Double-click to view full size");
+
+    m_stack->addWidget(m_textView);
+    m_stack->addWidget(m_imageView);
+    m_stack->setVisible(false);
+    layout->addWidget(m_stack, 1);
+
+    connect(m_downloadBtn, &QPushButton::clicked, this, [this]()
+    {
+        if (m_pixmap.isNull())
+            return;
+        QString path = QFileDialog::getSaveFileName(this, "Save Image",
+            m_fileId + ".png", "Images (*.png *.jpg *.bmp);;All Files (*)");
+        if (!path.isEmpty())
+        {
+            if (!m_pixmap.save(path))
+                QMessageBox::warning(this, "Save Error", "Failed to save image.");
+        }
+    });
+
+    connect(m_viewBtn, &QPushButton::clicked, this, &FilePreviewWidget::showImageFullSize);
+
+    connect(m_zoomInBtn, &QPushButton::clicked, this, [this]()
+    {
+        m_zoomScale = qMin(m_zoomScale * 1.25, 4.0);
+        m_imageView->setPixmap(m_pixmap.scaled(
+            m_pixmap.size() * m_zoomScale, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    });
+
+    connect(m_zoomOutBtn, &QPushButton::clicked, this, [this]()
+    {
+        m_zoomScale = qMax(m_zoomScale / 1.25, 0.1);
+        m_imageView->setPixmap(m_pixmap.scaled(
+            m_pixmap.size() * m_zoomScale, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    });
+
+    connect(m_fitBtn, &QPushButton::clicked, this, [this]()
+    {
+        QSize maxSize(400, 400);
+        double scaleX = double(maxSize.width()) / m_pixmap.width();
+        double scaleY = double(maxSize.height()) / m_pixmap.height();
+        m_zoomScale = qMin(scaleX, scaleY);
+        m_imageView->setPixmap(m_pixmap.scaled(
+            m_pixmap.size() * m_zoomScale, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+    });
+}
+
+void FilePreviewWidget::setContent(const QByteArray &data, const QString &mimeType)
+{
+    m_mimeType = mimeType;
+
+    if (mimeType.startsWith("text/") || mimeType.contains("json") || mimeType.contains("javascript"))
+    {
+        m_textView->setPlainText(QString::fromUtf8(data));
+        m_stack->setCurrentIndex(0);
+        m_stack->setVisible(true);
+        m_downloadBtn->setVisible(false);
+        m_viewBtn->setVisible(false);
+    }
+    else if (mimeType.startsWith("image/"))
+    {
+        QPixmap pix;
+        if (pix.loadFromData(data))
+        {
+            m_pixmap = pix;
+            m_zoomScale = 1.0;
+            m_imageView->setPixmap(pix.scaledToWidth(400, Qt::SmoothTransformation));
+            m_stack->setCurrentIndex(1);
+            m_stack->setVisible(true);
+            m_downloadBtn->setVisible(true);
+            m_viewBtn->setVisible(true);
+            m_imageToolbar->setVisible(true);
+        }
+    }
+    else
+    {
+        m_stack->setVisible(false);
+        m_downloadBtn->setVisible(true);
+        m_viewBtn->setVisible(false);
+    }
+}
+
+void FilePreviewWidget::mousePressEvent(QMouseEvent *event)
+{
+    if (event->button() == Qt::LeftButton && !m_pixmap.isNull())
+        showImageFullSize();
+    QWidget::mousePressEvent(event);
+}
+
+void FilePreviewWidget::mouseDoubleClickEvent(QMouseEvent *event)
+{
+    if (!m_pixmap.isNull())
+        showImageFullSize();
+    QWidget::mouseDoubleClickEvent(event);
+}
+
+void FilePreviewWidget::showImageFullSize()
+{
+    if (!m_pixmap.isNull())
+        ImageViewerDialog::viewImage(m_pixmap, m_fileId, this);
+}
+
+```
+
+
+// File: src\ui\FilePreviewWidget.h
+
+```h
+#pragma once
+
+#include <QWidget>
+#include <QLabel>
+#include <QPlainTextEdit>
+#include <QStackedWidget>
+#include <QPushButton>
+#include <QByteArray>
+#include <QPixmap>
+
+class FilePreviewWidget : public QWidget
+{
+    Q_OBJECT
+public:
+    explicit FilePreviewWidget(const QString &fileId, QWidget *parent = nullptr);
+
+    void setContent(const QByteArray &data, const QString &mimeType);
+
+protected:
+    void mousePressEvent(QMouseEvent *event) override;
+    void mouseDoubleClickEvent(QMouseEvent *event) override;
+
+private:
+    void showImageFullSize();
+
+    QString m_fileId;
+    QString m_mimeType;
+    QStackedWidget *m_stack;
+    QPlainTextEdit *m_textView;
+    QLabel *m_imageView;
+    QLabel *m_nameLabel;
+    QPushButton *m_downloadBtn;
+    QPushButton *m_viewBtn;
+    QPushButton *m_zoomInBtn;
+    QPushButton *m_zoomOutBtn;
+    QPushButton *m_fitBtn;
+    QWidget *m_imageToolbar;
+    QPixmap m_pixmap;
+    double m_zoomScale = 1.0;
+};
+
+```
+
+
+// File: src\ui\ImageViewerDialog.cpp
+
+```cpp
+#include "ImageViewerDialog.h"
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QFileDialog>
+#include <QMessageBox>
+#include <QApplication>
+
+ImageViewerDialog::ImageViewerDialog(const QPixmap &pixmap, const QString &title,
+                                     QWidget *parent)
+    : QDialog(parent)
+    , m_original(pixmap)
+    , m_imageLabel(new QLabel(this))
+    , m_scrollArea(new QScrollArea(this))
+    , m_zoomSlider(new QSlider(Qt::Horizontal, this))
+    , m_zoomLabel(new QLabel("100%", this))
+    , m_btnZoomIn(new QPushButton("+", this))
+    , m_btnZoomOut(new QPushButton("-", this))
+    , m_btnFit(new QPushButton("Fit", this))
+    , m_btnOriginal(new QPushButton("1:1", this))
+    , m_btnSave(new QPushButton("Save", this))
+{
+    setWindowTitle("Image: " + title);
+    resize(900, 700);
+
+    m_imageLabel->setPixmap(m_original);
+    m_imageLabel->setAlignment(Qt::AlignCenter);
+
+    m_scrollArea->setWidget(m_imageLabel);
+    m_scrollArea->setWidgetResizable(false);
+    m_scrollArea->setAlignment(Qt::AlignCenter);
+
+    m_zoomSlider->setRange(10, 400);
+    m_zoomSlider->setValue(100);
+    m_zoomSlider->setTickPosition(QSlider::TicksBelow);
+    m_zoomSlider->setTickInterval(50);
+
+    auto *mainLayout = new QVBoxLayout(this);
+
+    auto *toolbar = new QHBoxLayout;
+    toolbar->addWidget(m_btnZoomOut);
+    toolbar->addWidget(m_zoomSlider);
+    toolbar->addWidget(m_btnZoomIn);
+    toolbar->addWidget(m_zoomLabel);
+    toolbar->addStretch();
+    toolbar->addWidget(m_btnFit);
+    toolbar->addWidget(m_btnOriginal);
+    toolbar->addWidget(m_btnSave);
+    mainLayout->addLayout(toolbar);
+    mainLayout->addWidget(m_scrollArea, 1);
+
+    connect(m_btnZoomIn, &QPushButton::clicked, this, &ImageViewerDialog::zoomIn);
+    connect(m_btnZoomOut, &QPushButton::clicked, this, &ImageViewerDialog::zoomOut);
+    connect(m_btnFit, &QPushButton::clicked, this, &ImageViewerDialog::zoomFit);
+    connect(m_btnOriginal, &QPushButton::clicked, this, &ImageViewerDialog::zoomOriginal);
+    connect(m_btnSave, &QPushButton::clicked, this, &ImageViewerDialog::saveImage);
+    connect(m_zoomSlider, &QSlider::valueChanged, this, [this](int value)
+    {
+        m_scale = value / 100.0;
+        m_imageLabel->setPixmap(m_original.scaled(
+            m_original.size() * m_scale, Qt::KeepAspectRatio, Qt::SmoothTransformation));
+        updateZoomLabel();
+    });
+}
+
+bool ImageViewerDialog::viewImage(const QPixmap &pixmap, const QString &title,
+                                  QWidget *parent)
+{
+    ImageViewerDialog dlg(pixmap, title, parent);
+    return dlg.exec() == Accepted;
+}
+
+void ImageViewerDialog::zoomIn()
+{
+    m_zoomSlider->setValue(m_zoomSlider->value() + 25);
+}
+
+void ImageViewerDialog::zoomOut()
+{
+    m_zoomSlider->setValue(m_zoomSlider->value() - 25);
+}
+
+void ImageViewerDialog::zoomFit()
+{
+    QSize viewport = m_scrollArea->viewport()->size();
+    double scaleX = double(viewport.width()) / m_original.width();
+    double scaleY = double(viewport.height()) / m_original.height();
+    m_scale = qMin(scaleX, scaleY) * 0.9;
+    m_zoomSlider->setValue(qRound(m_scale * 100));
+}
+
+void ImageViewerDialog::zoomOriginal()
+{
+    m_zoomSlider->setValue(100);
+}
+
+void ImageViewerDialog::saveImage()
+{
+    QString path = QFileDialog::getSaveFileName(this, "Save Image", "image.png",
+        "Images (*.png *.jpg *.bmp)");
+    if (!path.isEmpty())
+    {
+        if (!m_original.save(path))
+            QMessageBox::warning(this, "Save Error", "Failed to save image.");
+    }
+}
+
+void ImageViewerDialog::updateZoomLabel()
+{
+    m_zoomLabel->setText(QString("%1%").arg(qRound(m_scale * 100)));
+}
+
+```
+
+
+// File: src\ui\ImageViewerDialog.h
+
+```h
+#pragma once
+
+#include <QDialog>
+#include <QLabel>
+#include <QScrollArea>
+#include <QPushButton>
+#include <QSlider>
+#include <QPixmap>
+
+class ImageViewerDialog : public QDialog
+{
+    Q_OBJECT
+public:
+    explicit ImageViewerDialog(const QPixmap &pixmap, const QString &title,
+                               QWidget *parent = nullptr);
+
+    static bool viewImage(const QPixmap &pixmap, const QString &title,
+                          QWidget *parent = nullptr);
+
+private slots:
+    void zoomIn();
+    void zoomOut();
+    void zoomFit();
+    void zoomOriginal();
+    void saveImage();
+
+private:
+    void updateZoomLabel();
+
+    QPixmap m_original;
+    QLabel *m_imageLabel;
+    QScrollArea *m_scrollArea;
+    QSlider *m_zoomSlider;
+    QLabel *m_zoomLabel;
+    QPushButton *m_btnZoomIn;
+    QPushButton *m_btnZoomOut;
+    QPushButton *m_btnFit;
+    QPushButton *m_btnOriginal;
+    QPushButton *m_btnSave;
+    double m_scale = 1.0;
+};
+
+```
+
+
+// File: src\ui\MainWindow.cpp
+
+```cpp
+#include "MainWindow.h"
+#include "ConversationListPane.h"
+#include "PromptListPane.h"
+#include "ResponsePane.h"
+#include "SearchDialog.h"
+#include "app/AuthManager.h"
+#include "api/DriveApi.h"
+#include "api/CopilotApi.h"
+#include "api/ConversationModel.h"
+#include "models/Conversation.h"
+#include <QMessageBox>
+#include <QVBoxLayout>
+#include <QHBoxLayout>
+#include <QInputDialog>
+#include <QApplication>
+#include <QFileInfo>
+#include <QStandardPaths>
+#include <QDir>
+#include <QFile>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include "app/Logger.h"
+
+#define MAX_CONVERSATIONS 4
+
+MainWindow::MainWindow(QWidget *parent)
+    : QMainWindow(parent)
+    , m_auth(new AuthManager(this))
+    , m_drive(new DriveApi(this))
+    , m_copilot(new CopilotApi(this))
+    , m_convModel(new ConversationModel(this))
+    , m_convPane(new ConversationListPane(this))
+    , m_promptPane(new PromptListPane(this))
+    , m_responsePane(new ResponsePane(this))
+    , m_searchDlg(nullptr)
+{
+    setupUi();
+    setupToolbar();
+    setupStatusBar();
+
+    connect(m_auth, &AuthManager::authSuccess, this, [this](const QString &message)
+    {
+        m_drive->setAccessToken(m_auth->accessToken());
+        m_drive->findFolder("Google AI Studio");
+        m_signInAction->setVisible(false);
+        m_signOutAction->setVisible(true);
+        statusBar()->showMessage(message);
+    });
+
+    connect(m_auth, &AuthManager::authFailed, this, [this](const QString &err)
+    {
+        statusBar()->showMessage("Auth failed: " + err);
+        QMessageBox::warning(this, "Auth Error", err);
+    });
+
+    connect(m_drive, &DriveApi::folderFound, this, [this](const QString &folderId)
+    {
+        onFolderFound(folderId);
+    });
+    connect(m_drive, &DriveApi::folderNotFound, this, [this]()
+    {
+        statusBar()->showMessage("'Google AI Studio' folder not found in Drive");
+    });
+    connect(m_drive, &DriveApi::conversationListReady, this, &MainWindow::onConversationsLoaded);
+    connect(m_drive, &DriveApi::conversationDownloaded, this,
+        [this](const QString &fileId, const QString &fileName, const QJsonObject &data)
+        {
+            Logger::instance().debug(QString("[MainWindow] conversationDownloaded: fileId=%1 fileName=%2 dataKeys=%3")
+                .arg(fileId, fileName, data.keys().join(", ")));
+
+            Conversation conv = m_convModel->parseConversation(fileId, fileName, data);
+
+            Logger::instance().debug(QString("[MainWindow] Parsed: model=%1 messages=%2 pairs=%3")
+                .arg(conv.model)
+                .arg(conv.messages.size())
+                .arg(conv.pairs.size()));
+
+            m_convPane->addConversation(conv);
+
+            if (m_selectedConvIndex >= 0 && m_selectedConvIndex < m_convPane->conversationCount())
+            {
+                if (m_convPane->conversationAt(m_selectedConvIndex).fileId == fileId)
+                {
+                    Logger::instance().debug("[MainWindow] Auto-loading active conversation");
+                    onConversationSelected(m_selectedConvIndex);
+                }
+            }
+        });
+    connect(m_drive, &DriveApi::apiError, this, [this](const QString &err)
+    {
+        statusBar()->showMessage("API error: " + err);
+    });
+
+    connect(m_drive, &DriveApi::tokenNeedsRefresh, this, [this]()
+    {
+        statusBar()->showMessage("Token expired. Refreshing...");
+        m_auth->refreshAccessToken();
+    });
+
+    connect(m_auth, &AuthManager::tokenRefreshed, this, [this]()
+    {
+        m_drive->setAccessToken(m_auth->accessToken());
+        m_drive->retryPendingRequests();
+        statusBar()->showMessage("Token refreshed. Continuing...");
+    });
+
+    connect(m_convPane, &ConversationListPane::conversationSelected,
+        this, &MainWindow::onConversationSelected);
+    connect(m_promptPane, &PromptListPane::promptSelected,
+        this, &MainWindow::onPromptSelected);
+
+    connect(m_auth, &AuthManager::authCodeRequired, this,
+        [this](const QString &authUrl)
+        {
+            bool ok;
+            QString code = QInputDialog::getText(this, "Google Auth",
+                "1. Sign in with the browser that opened.\n"
+                "2. Copy the code shown by Google.\n"
+                "3. Paste it here and press OK.\n\n"
+                "If the browser didn't open, visit:\n" + authUrl,
+                QLineEdit::Normal, QString(), &ok);
+            if (ok && !code.trimmed().isEmpty())
+                m_auth->submitAuthCode(code.trimmed());
+        });
+
+    connect(m_copilot, &CopilotApi::connected, this, &MainWindow::onCopilotConnected);
+    connect(m_copilot, &CopilotApi::connectionFailed, this, [this](const QString &err)
+    {
+        statusBar()->showMessage("Local server connection failed: " + err);
+    });
+    connect(m_copilot, &CopilotApi::responseReceived, this, &MainWindow::onCopilotResponse);
+    connect(m_copilot, &CopilotApi::errorOccurred, this, &MainWindow::onCopilotError);
+
+    connect(m_sendButton, &QPushButton::clicked, this, &MainWindow::onSendPrompt);
+    connect(m_chatInput, &QLineEdit::returnPressed, this, &MainWindow::onSendPrompt);
+}
+
+MainWindow::~MainWindow() {}
+
+void MainWindow::setupUi()
+{
+    QWidget *centralWidget = new QWidget(this);
+    QVBoxLayout *mainLayout = new QVBoxLayout(centralWidget);
+    mainLayout->setContentsMargins(0, 0, 0, 0);
+    mainLayout->setSpacing(0);
+
+    m_chatBar = new QWidget(this);
+    QHBoxLayout *chatLayout = new QHBoxLayout(m_chatBar);
+    chatLayout->setContentsMargins(4, 2, 4, 2);
+    m_chatInput = new QLineEdit(this);
+    m_chatInput->setPlaceholderText("Type a message...");
+    m_chatInput->setMinimumHeight(28);
+    m_sendButton = new QPushButton("Send", this);
+    m_sendButton->setFixedWidth(60);
+    m_chatBar->setLayout(chatLayout);
+    chatLayout->addWidget(m_chatInput);
+    chatLayout->addWidget(m_sendButton);
+    m_chatBar->setVisible(false);
+    mainLayout->addWidget(m_chatBar);
+
+    m_mainSplitter = new QSplitter(Qt::Horizontal, this);
+    m_leftSplitter = new QSplitter(Qt::Vertical, this);
+
+    m_leftSplitter->addWidget(m_convPane);
+    m_leftSplitter->addWidget(m_promptPane);
+    m_leftSplitter->setStretchFactor(0, 1);
+    m_leftSplitter->setStretchFactor(1, 1);
+
+    m_mainSplitter->addWidget(m_leftSplitter);
+    m_mainSplitter->addWidget(m_responsePane);
+    m_mainSplitter->setStretchFactor(0, 1);
+    m_mainSplitter->setStretchFactor(1, 3);
+
+    mainLayout->addWidget(m_mainSplitter);
+
+    setCentralWidget(centralWidget);
+}
+
+void MainWindow::setupToolbar()
+{
+    m_toolbar = addToolBar("Main");
+    m_toolbar->setMovable(false);
+
+    m_backendCombo = new QComboBox(this);
+    m_backendCombo->addItems({"Google AI Studio", "Local Server (Copilot)"});
+    m_toolbar->addWidget(m_backendCombo);
+    connect(m_backendCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+        this, &MainWindow::onBackendChanged);
+
+    m_toolbar->addSeparator();
+
+    m_signInAction = m_toolbar->addAction("Sign In with Google");
+    connect(m_signInAction, &QAction::triggered, this, &MainWindow::onSignIn);
+
+    m_signOutAction = m_toolbar->addAction("Sign Out");
+    m_signOutAction->setVisible(false);
+    connect(m_signOutAction, &QAction::triggered, this, &MainWindow::onSignOut);
+
+    m_toolbar->addSeparator();
+
+    m_searchAction = m_toolbar->addAction("Search");
+    connect(m_searchAction, &QAction::triggered, this, &MainWindow::onSearchTriggered);
+
+    m_toggleThoughts = m_toolbar->addAction("Show Thoughts");
+    m_toggleThoughts->setCheckable(true);
+    m_toggleThoughts->setChecked(false);
+    connect(m_toggleThoughts, &QAction::toggled, this, &MainWindow::onToggleThoughts);
+
+    m_toolbar->addSeparator();
+
+    m_sortCombo = new QComboBox(this);
+    m_sortCombo->addItems({"Newest First", "Oldest First", "Alphabetical A-Z", "Alphabetical Z-A"});
+    m_toolbar->addWidget(m_sortCombo);
+    connect(m_sortCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+        this, &MainWindow::onSortChanged);
+}
+
+void MainWindow::setupStatusBar()
+{
+    statusBar()->showMessage("Ready. Sign in to get started.");
+}
+
+void MainWindow::onBackendChanged(int index)
+{
+    if (index == 0)
+        switchToGoogleBackend();
+    else
+        switchToCopilotBackend();
+}
+
+void MainWindow::switchToGoogleBackend()
+{
+    m_chatBar->setVisible(false);
+    m_signInAction->setVisible(!m_auth->isAuthenticated());
+    m_signOutAction->setVisible(m_auth->isAuthenticated());
+
+    m_convPane->clear();
+    m_promptPane->clear();
+    m_responsePane->clear();
+
+    if (m_auth->isAuthenticated())
+    {
+        m_drive->setAccessToken(m_auth->accessToken());
+        m_drive->findFolder("Google AI Studio");
+    }
+    else
+    {
+        statusBar()->showMessage("Ready. Sign in to get started.");
+    }
+}
+
+void MainWindow::switchToCopilotBackend()
+{
+    m_signInAction->setVisible(false);
+    m_signOutAction->setVisible(false);
+    m_chatBar->setVisible(true);
+    m_chatInput->setFocus();
+
+    m_convPane->clear();
+    m_promptPane->clear();
+    m_responsePane->clear();
+
+    statusBar()->showMessage("Connecting to local server...");
+    m_copilot->fetchModels();
+}
+
+void MainWindow::onCopilotConnected(const QString &modelName)
+{
+    statusBar()->showMessage("Connected to local server. Model: " + modelName);
+
+    for (const auto &conv : m_localConversations)
+        m_convPane->addConversation(conv);
+}
+
+void MainWindow::onCopilotResponse(const QString &content, const QString &conversationId)
+{
+    m_waitingForResponse = false;
+    m_chatInput->setEnabled(true);
+    m_sendButton->setEnabled(true);
+
+    if (!conversationId.isEmpty())
+        m_currentConversationId = conversationId;
+
+    addCopilotMessage("model", content);
+
+    if (m_currentLocalConvIndex >= 0)
+    {
+        auto &conv = m_localConversations[m_currentLocalConvIndex];
+        m_convPane->addConversation(conv);
+        m_promptPane->setConversation(conv);
+    }
+
+    statusBar()->showMessage("Response received.");
+}
+
+void MainWindow::onCopilotError(const QString &error)
+{
+    m_waitingForResponse = false;
+    m_chatInput->setEnabled(true);
+    m_sendButton->setEnabled(true);
+
+    if (m_currentLocalConvIndex >= 0)
+    {
+        auto &conv = m_localConversations[m_currentLocalConvIndex];
+        m_convPane->addConversation(conv);
+        m_promptPane->setConversation(conv);
+    }
+
+    statusBar()->showMessage("Error: " + error);
+}
+
+void MainWindow::onSendPrompt()
+{
+    QString text = m_chatInput->text().trimmed();
+    if (text.isEmpty() || m_waitingForResponse)
+    {
+        return;
+    }
+
+    m_chatInput->clear();
+    m_chatInput->setEnabled(false);
+    m_sendButton->setEnabled(false);
+    m_waitingForResponse = true;
+
+    if (m_currentLocalConvIndex < 0)
+    {
+        Conversation conv;
+        conv.fileId = QString("local-%1").arg(QDateTime::currentMSecsSinceEpoch());
+        conv.fileName = text.left(80);
+        conv.model = "copilot";
+        m_localConversations.append(conv);
+        m_currentLocalConvIndex = m_localConversations.size() - 1;
+        m_convPane->addConversation(conv);
+    }
+
+    addCopilotMessage("user", text);
+
+    if (m_currentLocalConvIndex >= 0)
+    {
+        auto &conv = m_localConversations[m_currentLocalConvIndex];
+        m_convPane->addConversation(conv);
+        m_promptPane->setConversation(conv);
+    }
+
+    statusBar()->showMessage("Sending...");
+    m_copilot->sendMessage(text, m_currentConversationId);
+}
+
+void MainWindow::addCopilotMessage(const QString &role, const QString &text)
+{
+    if (m_currentLocalConvIndex < 0)
+        return;
+
+    auto &conv = m_localConversations[m_currentLocalConvIndex];
+
+    Message msg;
+    msg.text = text;
+    msg.role = role;
+    msg.createTime = QDateTime::currentDateTime();
+    conv.messages.append(msg);
+
+    if (role == "user")
+    {
+        Conversation::PromptResponsePair pair;
+        pair.prompt = msg;
+        conv.pairs.append(pair);
+    }
+    else if (!conv.pairs.isEmpty())
+    {
+        conv.pairs.last().responses.append(msg);
+    }
+}
+
+void MainWindow::onSignIn()
+{
+    QString userProfilePath = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    QString configPath = userProfilePath + "/AI/oauth_config.json";
+
+    if (QFileInfo::exists(configPath))
+    {
+        m_auth->loadConfig(configPath);
+    }
+    else
+    {
+        bool ok;
+        QString clientId = QInputDialog::getText(this, "Google API Credentials",
+            "oauth_config.json not found at:\n" + configPath + "\n\n"
+            "Enter your Google Drive Client ID:",
+            QLineEdit::Normal, QString(), &ok);
+        if (!ok || clientId.trimmed().isEmpty())
+            return;
+
+        QString clientSecret = QInputDialog::getText(this, "Google API Credentials",
+            "Enter your Google Drive Client Secret:",
+            QLineEdit::Password, QString(), &ok);
+        if (!ok || clientSecret.trimmed().isEmpty())
+            return;
+
+        m_auth->setCredentials(clientId.trimmed(), clientSecret.trimmed());
+
+        QDir().mkpath(QFileInfo(configPath).absolutePath());
+        QFile f(configPath);
+        if (f.open(QIODevice::WriteOnly))
+        {
+            QJsonObject installed;
+            installed["client_id"] = clientId.trimmed();
+            installed["client_secret"] = clientSecret.trimmed();
+            QJsonObject root;
+            root["installed"] = installed;
+            f.write(QJsonDocument(root).toJson());
+            f.close();
+        }
+    }
+
+    if (!m_auth->isAuthenticated())
+        m_auth->authenticate();
+    else
+    {
+        m_drive->setAccessToken(m_auth->accessToken());
+        m_drive->findFolder("Google AI Studio");
+    }
+}
+
+void MainWindow::onSignOut()
+{
+    m_auth->signOut();
+    m_signInAction->setVisible(true);
+    m_signOutAction->setVisible(false);
+    m_convPane->clear();
+    m_promptPane->clear();
+    m_responsePane->clear();
+    statusBar()->showMessage("Signed out.");
+}
+
+void MainWindow::onFolderFound(const QString &folderId)
+{
+    m_currentFolderId = folderId;
+    statusBar()->showMessage("Loading conversations...");
+    m_drive->listConversations(folderId);
+}
+
+void MainWindow::onConversationsLoaded(const QList<QPair<QString, QString>> &files)
+{
+    m_conversationFiles = files;
+    Logger::instance().debug(QString("[MainWindow] onConversationsLoaded: %1 files").arg(files.size()));
+    int preloadCount = files.size();
+#ifdef MAX_CONVERSATIONS
+    preloadCount = qMin(MAX_CONVERSATIONS, files.size());
+#endif
+
+    for (int i = 0; i < preloadCount; ++i)
+    {
+        Logger::instance().debug(QString("[MainWindow]   [%1] fileId=%2 fileName=%3")
+            .arg(i).arg(files[i].first, files[i].second));
+    }
+
+
+    Logger::instance().debug(QString("[MainWindow] Auto-downloading first %1 conversations").arg(preloadCount));
+
+    for (int i = 0; i < preloadCount; ++i)
+    {
+        m_drive->downloadConversation(files[i].first, files[i].second);
+    }
+
+    statusBar()->showMessage(QString("Found %1 conversations. Loading %2...")
+        .arg(files.size()).arg(preloadCount));
+
+    m_convPane->clear();
+    m_convPane->setFileList(files);
+}
+
+void MainWindow::onConversationSelected(int index)
+{
+    Logger::instance().debug(QString("[MainWindow] onConversationSelected: index=%1").arg(index));
+
+    if (index < 0 || index >= m_convPane->conversationCount())
+    {
+        Logger::instance().debug("[MainWindow] Index out of range, returning");
+        return;
+    }
+
+    m_selectedConvIndex = index;
+    const auto &conv = m_convPane->conversationAt(index);
+
+    Logger::instance().debug(QString("[MainWindow] Selected: fileId=%1 fileName=%2 model=%3 messages=%4 pairs=%5")
+        .arg(conv.fileId, conv.fileName, conv.model)
+        .arg(conv.messages.size())
+        .arg(conv.pairs.size()));
+
+    if (conv.model.isEmpty() && conv.messages.isEmpty())
+    {
+        Logger::instance().debug("[MainWindow] Stub detected, triggering download");
+        statusBar()->showMessage("Downloading conversation data...");
+        m_promptPane->clear();
+        m_responsePane->clear();
+        m_drive->downloadConversation(conv.fileId, conv.fileName);
+        return;
+    }
+
+    Logger::instance().debug("[MainWindow] Conversation fully loaded, displaying");
+    m_promptPane->setConversation(conv);
+    m_responsePane->clear();
+
+    statusBar()->showMessage(
+        QString("Conversation: %1 | %2 pairs | %3 tokens")
+            .arg(conv.fileName)
+            .arg(conv.pairs.size())
+            .arg(conv.totalTokenCount()));
+}
+
+void MainWindow::onPromptSelected(int pairIndex)
+{
+    if (m_selectedConvIndex < 0)
+    {
+        return;
+    }
+
+    const auto &conv = m_convPane->conversationAt(m_selectedConvIndex);
+    if (pairIndex < 0 || pairIndex >= conv.pairs.size())
+    {
+        return;
+    }
+
+    const auto &pair = conv.pairs.at(pairIndex);
+    bool showThoughts = m_toggleThoughts->isChecked();
+
+    m_responsePane->showResponse(pair, showThoughts, m_drive);
+}
+
+void MainWindow::onSearchTriggered()
+{
+    if (!m_searchDlg)
+        m_searchDlg = new SearchDialog(m_convPane->allConversations(), this);
+
+    m_searchDlg->show();
+    m_searchDlg->raise();
+    m_searchDlg->activateWindow();
+}
+
+void MainWindow::onToggleThoughts(bool visible)
+{
+    Q_UNUSED(visible)
+    if (m_selectedConvIndex >= 0)
+    {
+        int promptIndex = m_promptPane->currentIndex();
+        if (promptIndex >= 0)
+            onPromptSelected(promptIndex);
+    }
+}
+
+void MainWindow::onSortChanged(int index)
+{
+    switch (index)
+    {
+    case 0: m_convPane->sortBy(ConversationListPane::NewestFirst); break;
+    case 1: m_convPane->sortBy(ConversationListPane::OldestFirst); break;
+    case 2: m_convPane->sortBy(ConversationListPane::AlphaAZ); break;
+    case 3: m_convPane->sortBy(ConversationListPane::AlphaZA); break;
+    }
+}
+
+void MainWindow::loadConversation(const QString &fileId, const QString &fileName)
+{
+    m_drive->downloadConversation(fileId, fileName);
+}
+
+```
+
+
+// File: src\ui\MainWindow.h
+
+```h
+#pragma once
+
+#include <QMainWindow>
+#include <QSplitter>
+#include <QToolBar>
+#include <QStatusBar>
+#include <QAction>
+#include <QComboBox>
+#include <QLineEdit>
+#include <QPushButton>
+#include <QWidget>
+#include <QHBoxLayout>
+#include "models/Conversation.h"
+
+class AuthManager;
+class DriveApi;
+class CopilotApi;
+class ConversationModel;
+class ConversationListPane;
+class PromptListPane;
+class ResponsePane;
+class SearchDialog;
+
+class MainWindow : public QMainWindow
+{
+    Q_OBJECT
+public:
+    explicit MainWindow(QWidget *parent = nullptr);
+    ~MainWindow() override;
+
+private slots:
+    void onSignIn();
+    void onSignOut();
+    void onFolderFound(const QString &folderId);
+    void onConversationsLoaded(const QList<QPair<QString, QString>> &files);
+    void onConversationSelected(int index);
+    void onPromptSelected(int pairIndex);
+    void onSearchTriggered();
+    void onToggleThoughts(bool visible);
+    void onSortChanged(int index);
+    void onBackendChanged(int index);
+    void onSendPrompt();
+    void onCopilotConnected(const QString &modelName);
+    void onCopilotResponse(const QString &content, const QString &conversationId);
+    void onCopilotError(const QString &error);
+
+private:
+    void setupUi();
+    void setupToolbar();
+    void setupStatusBar();
+    void loadConversation(const QString &fileId, const QString &fileName);
+    void switchToGoogleBackend();
+    void switchToCopilotBackend();
+    void addCopilotMessage(const QString &role, const QString &text);
+
+    AuthManager *m_auth;
+    DriveApi *m_drive;
+    CopilotApi *m_copilot;
+    ConversationModel *m_convModel;
+
+    ConversationListPane *m_convPane;
+    PromptListPane *m_promptPane;
+    ResponsePane *m_responsePane;
+    SearchDialog *m_searchDlg;
+
+    QSplitter *m_mainSplitter;
+    QSplitter *m_leftSplitter;
+    QToolBar *m_toolbar;
+
+    QAction *m_signInAction;
+    QAction *m_signOutAction;
+    QAction *m_searchAction;
+    QAction *m_toggleThoughts;
+    QComboBox *m_sortCombo;
+    QComboBox *m_backendCombo;
+    QWidget *m_chatBar;
+    QLineEdit *m_chatInput;
+    QPushButton *m_sendButton;
+
+    QString m_currentFolderId;
+    QList<QPair<QString, QString>> m_conversationFiles;
+    int m_selectedConvIndex = -1;
+
+    // Local (Copilot) conversation state
+    QList<Conversation> m_localConversations;
+    int m_currentLocalConvIndex = -1;
+    QString m_currentConversationId;
+    bool m_waitingForResponse = false;
+};
+
+```
+
+
+// File: src\ui\PromptListPane.cpp
+
+```cpp
+#include "PromptListPane.h"
+#include "app/Logger.h"
+#include <QVBoxLayout>
+#include <QLabel>
+
+PromptListPane::PromptListPane(QWidget *parent)
+    : QWidget(parent)
+    , m_list(new QListWidget(this))
+{
+    auto *layout = new QVBoxLayout(this);
+    layout->setContentsMargins(0, 0, 0, 0);
+    auto *header = new QLabel("User Prompts", this);
+    header->setStyleSheet("font-weight: bold; padding: 4px;");
+    layout->addWidget(header);
+    layout->addWidget(m_list);
+
+    connect(m_list, &QListWidget::currentRowChanged, this, [this](int row)
+    {
+        emit promptSelected(row);
+    });
+}
+
+void PromptListPane::setConversation(const Conversation &conv)
+{
+    m_currentConv = conv;
+    refreshList();
+}
+
+void PromptListPane::clear()
+{
+    m_list->clear();
+    m_currentConv = Conversation();
+}
+
+int PromptListPane::currentIndex() const
+{
+    return m_list->currentRow();
+}
+
+void PromptListPane::refreshList()
+{
+    m_list->blockSignals(true);
+    m_list->clear();
+
+    for (int i = 0; i < m_currentConv.pairs.size(); ++i)
+    {
+        const auto &pair = m_currentConv.pairs[i];
+        QString preview = pair.prompt.text.left(80);
+        if (pair.prompt.text.length() > 80)
+            preview += "...";
+        if (preview.isEmpty() && !pair.prompt.driveDocumentId.isEmpty())
+            preview = "[Uploaded file]";
+        else if (preview.isEmpty() && !pair.prompt.inlineImageData.isEmpty())
+            preview = "[Inline image]";
+        else if (preview.isEmpty())
+            preview = "(empty prompt)";
+
+        QString dateStr = pair.prompt.createTime.isValid()
+            ? pair.prompt.createTime.toLocalTime().toString("yyyy-MM-dd hh:mm:ss")
+            : "no-time";
+
+        auto *item = new QListWidgetItem(
+            QString("%1\n[%2 tok]  %3")
+                .arg(preview)
+                .arg(pair.prompt.tokenCount)
+                .arg(dateStr));
+        m_list->addItem(item);
+
+        if (!pair.prompt.driveDocumentId.isEmpty())
+            Logger::instance().info(
+                QString("[Attachment] PromptList: pair %1 docId='%2' text='%3'")
+                    .arg(i)
+                    .arg(pair.prompt.driveDocumentId)
+                    .arg(pair.prompt.text.left(60)));
+    }
+
+    m_list->blockSignals(false);
+}
+
+```
+
+
+// File: src\ui\PromptListPane.h
+
+```h
+#pragma once
+
+#include <QWidget>
+#include <QListWidget>
+#include "models/Conversation.h"
+
+class PromptListPane : public QWidget
+{
+    Q_OBJECT
+public:
+    explicit PromptListPane(QWidget *parent = nullptr);
+
+    void setConversation(const Conversation &conv);
+    void clear();
+    int currentIndex() const;
+
+signals:
+    void promptSelected(int pairIndex);
+
+private:
+    void refreshList();
+
+    QListWidget *m_list;
+    Conversation m_currentConv;
+};
+
+```
+
+
+// File: src\ui\ResponsePane.cpp
+
+```cpp
+#include "ResponsePane.h"
+#include "FilePreviewWidget.h"
+#include "api/DriveApi.h"
+#include "app/Logger.h"
+#include <QPixmap>
+#include <QScrollArea>
+#include <QLabel>
+#include <QJsonArray>
+#include <QJsonObject>
+#include <QTextDocument>
+#include <QScrollBar>
+#include <QRegularExpression>
+
+// Convert Google AI markdown to clean HTML for QTextBrowser
+static QString markdownToHtml(const QString &markdown)
+{
+    QString md = markdown;
+
+    // --- Pre-process features Qt's markdown doesn't handle ---
+
+    // Strikethrough: ~~text~~ → <s>text</s>
+    md.replace(QRegularExpression("~~(.+?)~~"), "<s>\\1</s>");
+
+    // Task list items: use Unicode ballot boxes
+    md.replace("- [x]", "- &#x2611;");
+    md.replace("- [ ]", "- &#x2610;");
+
+    // Convert via Qt's markdown renderer
+    QTextDocument doc;
+    doc.setMarkdown(md);
+    QString html = doc.toHtml();
+
+    // Extract only <body> content, strip the outer html/head/body tags
+    int bodyStart = html.indexOf("<body");
+    if (bodyStart < 0)
+        return html;
+    bodyStart = html.indexOf(">", bodyStart) + 1;
+    int bodyEnd = html.indexOf("</body>", bodyStart);
+    if (bodyEnd < 0)
+        return html;
+    QString body = html.mid(bodyStart, bodyEnd - bodyStart);
+
+    // Clean up Qt-specific cruft: remove excessive <span> font tags
+    body.replace(QRegularExpression("<span[^>]*>"), "");
+    body.replace("</span>", "");
+    // QTextDocument adds <p style="..."> — keep the style but clean up orphans
+    body.replace("<p style=\"-qt-paragraph-type:empty\"/>", "<p><br></p>");
+
+    return body;
+}
+
+ResponsePane::ResponsePane(QWidget *parent)
+    : QWidget(parent)
+    , m_browser(new QTextBrowser(this))
+{
+    m_layout = new QVBoxLayout(this);
+    m_layout->setContentsMargins(0, 0, 0, 0);
+
+    auto *header = new QLabel("AI Response", this);
+    header->setStyleSheet("font-weight: bold; padding: 4px;");
+    m_layout->addWidget(header);
+    m_layout->addWidget(m_browser);
+}
+
+void ResponsePane::showResponse(const Conversation::PromptResponsePair &pair,
+                                bool showThoughts, DriveApi *drive)
+{
+    removeFilePreviews();
+    m_browser->clear();
+
+    m_browser->setHtml(
+        "<h3>Prompt</h3><div style='padding:8px; margin:4px 0;'>"
+        + markdownToHtml(pair.prompt.text) + "</div><hr>");
+
+    if (!pair.prompt.driveDocumentId.isEmpty())
+    {
+        Logger::instance().info(
+            QString("[Attachment] showResponse: displaying pair with docId='%1'")
+                .arg(pair.prompt.driveDocumentId));
+        appendFileAttachment(pair.prompt.driveDocumentId, drive);
+    }
+
+    if (!pair.prompt.inlineImageData.isEmpty())
+    {
+        appendInlineImage(pair.prompt.inlineImageData, pair.prompt.inlineImageMime);
+    }
+
+    for (const auto &resp : pair.responses)
+    {
+        appendModelResponse(resp.text, resp.isThought, showThoughts);
+    }
+
+    if (pair.responses.isEmpty())
+        m_browser->append("<p><i>No response yet.</i></p>");
+
+    m_browser->verticalScrollBar()->setValue(0);
+}
+
+void ResponsePane::appendModelResponse(const QString &text, bool isThought, bool showThoughts)
+{
+    if (isThought && !showThoughts)
+        return;
+
+    QString html;
+
+    if (text.startsWith("ERROR: Cannot read"))
+    {
+        html = "<div style='background:#fff3cd; border:1px solid #ffc107; border-radius:4px; "
+               "padding:8px; margin:4px 0;'>"
+               "<b>&#x26A0; Image not supported:</b><br>" + markdownToHtml(text) + "</div>";
+    }
+    else if (isThought)
+    {
+        html = "<div style='background:#f0f0f0; border-left:3px solid #888; padding:8px; margin:4px 0;'>"
+               "<i>Thought:</i><br>" + markdownToHtml(text) + "</div>";
+    }
+    else
+    {
+        html = "<div style='padding:8px; margin:4px 0;'>" + markdownToHtml(text) + "</div>";
+    }
+
+    m_browser->append(html);
+}
+
+void ResponsePane::appendFileAttachment(const QString &fileId, DriveApi *drive)
+{
+    if (!drive)
+    {
+        Logger::instance().warn(
+            QString("[Attachment] appendFileAttachment: drive is null for fileId='%1'").arg(fileId));
+        return;
+    }
+
+    Logger::instance().info(
+        QString("[Attachment] appendFileAttachment: downloading fileId='%1'").arg(fileId));
+    m_browser->append("<hr><b>Attached file:</b> " + fileId + "<br>");
+
+    auto *preview = new FilePreviewWidget(fileId, this);
+    m_layout->addWidget(preview);
+    m_filePreviews.append(preview);
+
+    QPointer<FilePreviewWidget> safePreview(preview);
+
+    connect(drive, &DriveApi::attachmentDownloaded, this,
+        [this, safePreview, fileId](const QString &id, const QByteArray &data, const QString &mimeType)
+        {
+            if (id == fileId && safePreview)
+                safePreview->setContent(data, mimeType);
+        });
+
+    drive->downloadAttachment(fileId);
+}
+
+void ResponsePane::appendInlineImage(const QString &base64data, const QString &mimeType)
+{
+    QByteArray raw = QByteArray::fromBase64(base64data.toUtf8());
+    QPixmap pix;
+    if (pix.loadFromData(raw))
+    {
+        auto *preview = new FilePreviewWidget("[inline image]", this);
+        preview->setContent(raw, mimeType);
+        m_layout->addWidget(preview);
+        m_filePreviews.append(preview);
+    }
+    else
+    {
+        m_browser->append("<p><i>[Inline image could not be decoded]</i></p>");
+    }
+}
+
+void ResponsePane::removeFilePreviews()
+{
+    for (auto *w : m_filePreviews)
+    {
+        m_layout->removeWidget(w);
+        w->deleteLater();
+    }
+    m_filePreviews.clear();
+}
+
+void ResponsePane::clear()
+{
+    removeFilePreviews();
+    m_browser->clear();
+}
+
+```
+
+
+// File: src\ui\ResponsePane.h
+
+```h
+#pragma once
+
+#include <QWidget>
+#include <QTextBrowser>
+#include <QVBoxLayout>
+#include <QCheckBox>
+#include <QList>
+#include <QPointer>
+#include "models/Conversation.h"
+
+class DriveApi;
+class FilePreviewWidget;
+
+class ResponsePane : public QWidget
+{
+    Q_OBJECT
+public:
+    explicit ResponsePane(QWidget *parent = nullptr);
+
+    void showResponse(const Conversation::PromptResponsePair &pair,
+                      bool showThoughts, DriveApi *drive);
+    void clear();
+
+private:
+    void removeFilePreviews();
+    void appendModelResponse(const QString &text, bool isThought, bool showThoughts);
+    void appendFileAttachment(const QString &fileId, DriveApi *drive);
+    void appendInlineImage(const QString &base64data, const QString &mimeType);
+
+    QTextBrowser *m_browser;
+    QVBoxLayout *m_layout;
+    QList<FilePreviewWidget*> m_filePreviews;
+};
+
+```
+
+
+// File: src\ui\SearchDialog.cpp
+
+```cpp
+#include "SearchDialog.h"
+#include <QVBoxLayout>
+#include <QLabel>
+
+SearchDialog::SearchDialog(const QList<Conversation> &conversations,
+                           QWidget *parent)
+    : QDialog(parent)
+    , m_searchInput(new QLineEdit(this))
+    , m_resultsList(new QListWidget(this))
+    , m_conversations(conversations)
+{
+    setWindowTitle("Search Conversations");
+    resize(500, 400);
+
+    auto *layout = new QVBoxLayout(this);
+    layout->addWidget(new QLabel("Search across all conversations:", this));
+    layout->addWidget(m_searchInput);
+    layout->addWidget(m_resultsList);
+
+    m_searchInput->setPlaceholderText("Type to search...");
+    connect(m_searchInput, &QLineEdit::textChanged, this, &SearchDialog::onSearchTextChanged);
+}
+
+void SearchDialog::onSearchTextChanged(const QString &text)
+{
+    m_resultsList->clear();
+
+    if (text.length() < 2)
+        return;
+
+    QString lower = text.toLower();
+
+    for (const auto &conv : m_conversations)
+    {
+        for (const auto &msg : conv.messages)
+        {
+            if (msg.text.toLower().contains(lower))
+            {
+                QString preview = msg.text.left(120);
+                if (msg.text.length() > 120)
+                    preview += "...";
+
+                auto *item = new QListWidgetItem(
+                    QString("[%1] %2: %3")
+                        .arg(conv.fileName, msg.role, preview));
+                m_resultsList->addItem(item);
+            }
+        }
+    }
+
+    if (m_resultsList->count() == 0 && text.length() >= 2)
+        m_resultsList->addItem("No matches found.");
+}
+
+```
+
+
+// File: src\ui\SearchDialog.h
+
+```h
+#pragma once
+
+#include <QDialog>
+#include <QLineEdit>
+#include <QListWidget>
+#include "models/Conversation.h"
+
+class SearchDialog : public QDialog
+{
+    Q_OBJECT
+public:
+    explicit SearchDialog(const QList<Conversation> &conversations,
+                          QWidget *parent = nullptr);
+
+private slots:
+    void onSearchTextChanged(const QString &text);
+
+private:
+    QLineEdit *m_searchInput;
+    QListWidget *m_resultsList;
+    QList<Conversation> m_conversations;
+};
+
+```
+
