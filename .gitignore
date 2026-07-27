@@ -47,3 +47,4 @@ config/oauth_config.json
 
 # Logs
 *.log
+codetree.txt
