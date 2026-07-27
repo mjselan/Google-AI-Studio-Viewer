@@ -1,5 +1,6 @@
 #include "ConversationListPane.h"
 #include "app/Logger.h"
+#include "api/DriveApi.h"
 #include <QVBoxLayout>
 #include <QLabel>
 #include <algorithm>
@@ -30,17 +31,19 @@ bool ConversationListPane::isValidConv(const Conversation &conv) const
     return true;
 }
 
-void ConversationListPane::setFileList(const QList<QPair<QString, QString>> &files)
+void ConversationListPane::setFileList(const QList<DriveFile> &files)
 {
     Logger::instance().debug(QString("[ConvList] setFileList: received %1 files").arg(files.size()));
     m_fileList = files;
     m_conversations.clear();
     for (const auto &f : files)
     {
-        Logger::instance().debug(QString("[ConvList] Creating stub: fileId=%1 fileName=%2").arg(f.first, f.second));
+        Logger::instance().debug(QString("[ConvList] Creating stub: fileId=%1 fileName=%2 modifiedTime=%3")
+            .arg(f.fileId, f.fileName, f.modifiedTime.toString(Qt::ISODate)));
         Conversation stub;
-        stub.fileId = f.first;
-        stub.fileName = f.second;
+        stub.fileId = f.fileId;
+        stub.fileName = f.fileName;
+        stub.lastModified = f.modifiedTime;
         m_conversations.append(stub);
     }
     refreshList();
@@ -136,7 +139,10 @@ void ConversationListPane::refreshList()
         }
         else
         {
-            labelText = QString("%1\n[Click to load...]").arg(title);
+            QString dateStr = conv.lastModified.isValid()
+                ? conv.lastModified.toLocalTime().toString("yyyy-MM-dd hh:mm:ss")
+                : "";
+            labelText = QString("%1\n[Click to load...] %2").arg(title, dateStr);
         }
 
         Logger::instance().debug(QString("[ConvList] Label text: %1").arg(labelText));
@@ -157,8 +163,8 @@ void ConversationListPane::applySort()
         std::sort(m_conversations.begin(), m_conversations.end(),
             [](const Conversation &a, const Conversation &b)
             {
-                auto ta = a.messages.isEmpty() ? QDateTime() : a.messages.last().createTime;
-                auto tb = b.messages.isEmpty() ? QDateTime() : b.messages.last().createTime;
+                auto ta = a.messages.isEmpty() ? a.lastModified : a.messages.last().createTime;
+                auto tb = b.messages.isEmpty() ? b.lastModified : b.messages.last().createTime;
                 return ta > tb;
             });
         break;
@@ -166,8 +172,8 @@ void ConversationListPane::applySort()
         std::sort(m_conversations.begin(), m_conversations.end(),
             [](const Conversation &a, const Conversation &b)
             {
-                auto ta = a.messages.isEmpty() ? QDateTime() : a.messages.last().createTime;
-                auto tb = b.messages.isEmpty() ? QDateTime() : b.messages.last().createTime;
+                auto ta = a.messages.isEmpty() ? a.lastModified : a.messages.last().createTime;
+                auto tb = b.messages.isEmpty() ? b.lastModified : b.messages.last().createTime;
                 return ta < tb;
             });
         break;

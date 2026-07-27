@@ -5,7 +5,15 @@
 #include <QList>
 #include <QJsonObject>
 #include <QNetworkReply>
+#include <QDateTime>
 #include <functional>
+
+struct DriveFile
+{
+    QString fileId;
+    QString fileName;
+    QDateTime modifiedTime;
+};
 
 class DriveApi : public QObject
 {
@@ -25,7 +33,7 @@ public:
 signals:
     void folderFound(const QString &folderId);
     void folderNotFound();
-    void conversationListReady(const QList<QPair<QString, QString>> &files);
+    void conversationListReady(const QList<DriveFile> &files);
     void conversationDownloaded(const QString &fileId, const QString &fileName, const QJsonObject &data);
     void attachmentDownloaded(const QString &fileId, const QByteArray &data, const QString &mimeType);
     void apiError(const QString &error);

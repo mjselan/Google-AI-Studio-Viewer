@@ -439,7 +439,7 @@ void MainWindow::onFolderFound(const QString &folderId)
     m_drive->listConversations(folderId);
 }
 
-void MainWindow::onConversationsLoaded(const QList<QPair<QString, QString>> &files)
+void MainWindow::onConversationsLoaded(const QList<DriveFile> &files)
 {
     m_conversationFiles = files;
     Logger::instance().debug(QString("[MainWindow] onConversationsLoaded: %1 files").arg(files.size()));

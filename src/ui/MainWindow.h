@@ -12,6 +12,7 @@
 #include <QHBoxLayout>
 #include "models/Conversation.h"
 
+struct DriveFile;
 class AuthManager;
 class DriveApi;
 class CopilotApi;
@@ -32,7 +33,7 @@ private slots:
     void onSignIn();
     void onSignOut();
     void onFolderFound(const QString &folderId);
-    void onConversationsLoaded(const QList<QPair<QString, QString>> &files);
+    void onConversationsLoaded(const QList<DriveFile> &files);
     void onConversationSelected(int index);
     void onPromptSelected(int pairIndex);
     void onSearchTriggered();
@@ -78,7 +79,7 @@ private:
     QPushButton *m_sendButton;
 
     QString m_currentFolderId;
-    QList<QPair<QString, QString>> m_conversationFiles;
+    QList<DriveFile> m_conversationFiles;
     int m_selectedConvIndex = -1;
 
     // Local (Copilot) conversation state

@@ -101,7 +101,7 @@ void DriveApi::listConversations(const QString &folderId)
 
     sendGet(url.toString(), [this](const QJsonObject &response)
             {
-                QList<QPair<QString, QString>> files;
+                QList<DriveFile> files;
                 for (const auto &f : response["files"].toArray())
                 {
                     auto obj = f.toObject();
@@ -134,7 +134,11 @@ void DriveApi::listConversations(const QString &folderId)
                         }
                     }
 
-                    files.append({id, name});
+                    DriveFile df;
+                    df.fileId = id;
+                    df.fileName = name;
+                    df.modifiedTime = QDateTime::fromString(obj["modifiedTime"].toString(), Qt::ISODate);
+                    files.append(df);
                 }
                 emit conversationListReady(files);
             });

@@ -5,6 +5,8 @@
 #include <QList>
 #include "models/Conversation.h"
 
+struct DriveFile;
+
 class ConversationListPane : public QWidget
 {
     Q_OBJECT
@@ -13,7 +15,7 @@ public:
 
     explicit ConversationListPane(QWidget *parent = nullptr);
 
-    void setFileList(const QList<QPair<QString, QString>> &files);
+    void setFileList(const QList<DriveFile> &files);
     void addConversation(const Conversation &conv);
     void clear();
     int conversationCount() const;
@@ -33,7 +35,7 @@ private:
     QListWidget *m_list;
     QList<Conversation> m_conversations;
     QList<int> m_rowToConv;  // visual row → m_conversations index
-    QList<QPair<QString, QString>> m_fileList;
+    QList<DriveFile> m_fileList;
     SortMode m_sortMode = NewestFirst;
     int m_filesPopulated = 0;
 };
