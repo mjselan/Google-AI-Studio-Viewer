@@ -7,6 +7,7 @@
 #include "api/DriveApi.h"
 #include "api/CopilotApi.h"
 #include "api/ConversationModel.h"
+#include "api/LocalCache.h"
 #include "models/Conversation.h"
 #include <QMessageBox>
 #include <QVBoxLayout>
@@ -29,6 +30,7 @@ MainWindow::MainWindow(QWidget *parent)
     , m_drive(new DriveApi(this))
     , m_copilot(new CopilotApi(this))
     , m_convModel(new ConversationModel(this))
+    , m_cache(new LocalCache())
     , m_convPane(new ConversationListPane(this))
     , m_promptPane(new PromptListPane(this))
     , m_responsePane(new ResponsePane(this))
@@ -37,6 +39,7 @@ MainWindow::MainWindow(QWidget *parent)
     setupUi();
     setupToolbar();
     setupStatusBar();
+    m_cache->init();
 
     connect(m_auth, &AuthManager::authSuccess, this, [this](const QString &message)
     {
@@ -67,6 +70,17 @@ MainWindow::MainWindow(QWidget *parent)
         {
             Logger::instance().debug(QString("[MainWindow] conversationDownloaded: fileId=%1 fileName=%2 dataKeys=%3")
                 .arg(fileId, fileName, data.keys().join(", ")));
+
+            QDateTime modTime;
+            for (const auto &f : m_conversationFiles)
+            {
+                if (f.fileId == fileId)
+                {
+                    modTime = f.modifiedTime;
+                    break;
+                }
+            }
+            m_cache->saveConversation(fileId, fileName, modTime, data);
 
             Conversation conv = m_convModel->parseConversation(fileId, fileName, data);
 
@@ -473,7 +487,26 @@ void MainWindow::onConversationSelected(int index)
 
     if (conv.model.isEmpty() && conv.messages.isEmpty())
     {
-        Logger::instance().debug("[MainWindow] Stub detected, triggering download");
+        Logger::instance().debug("[MainWindow] Stub detected, checking cache");
+
+        QDateTime cachedModTime = m_cache->getModifiedTime(conv.fileId);
+        if (cachedModTime.isValid() && cachedModTime == conv.lastModified)
+        {
+            Logger::instance().debug("[MainWindow] Cache hit, loading from local database");
+            QJsonObject data = m_cache->loadConversation(conv.fileId);
+            if (!data.isEmpty())
+            {
+                Conversation parsed = m_convModel->parseConversation(conv.fileId, conv.fileName, data);
+                m_convPane->addConversation(parsed);
+
+                m_promptPane->clear();
+                m_responsePane->clear();
+                onConversationSelected(index);
+                return;
+            }
+        }
+
+        Logger::instance().debug("[MainWindow] Cache miss, triggering download");
         statusBar()->showMessage("Downloading conversation data...");
         m_promptPane->clear();
         m_responsePane->clear();

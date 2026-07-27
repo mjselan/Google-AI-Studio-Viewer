@@ -125,30 +125,35 @@ void ConversationListPane::refreshList()
             .arg(conv.messages.size())
             .arg(conv.model));
 
-        QString labelText;
+        QString dateStr;
         if (isDownloaded)
-        {
-            int tok = conv.totalTokenCount();
-            QString modelShort = conv.model.section('/', -1);
-            QString dateStr = conv.lastMessageTime().isValid()
+            dateStr = conv.lastMessageTime().isValid()
                 ? conv.lastMessageTime().toLocalTime().toString("yyyy-MM-dd hh:mm:ss")
                 : "";
-
-            labelText = QString("%1\n[%2] %3 tok  %4")
-                            .arg(title, modelShort).arg(tok).arg(dateStr);
-        }
         else
-        {
-            QString dateStr = conv.lastModified.isValid()
+            dateStr = conv.lastModified.isValid()
                 ? conv.lastModified.toLocalTime().toString("yyyy-MM-dd hh:mm:ss")
                 : "";
-            labelText = QString("%1\n[Click to load...] %2").arg(title, dateStr);
-        }
+
+        QString labelText = dateStr.isEmpty()
+            ? title
+            : QString("%1\n%2").arg(title, dateStr);
 
         Logger::instance().debug(QString("[ConvList] Label text: %1").arg(labelText));
 
         auto *item = new QListWidgetItem(labelText);
         item->setToolTip(conv.fileName);
+
+        if (isDownloaded)
+        {
+            QFont font = item->font();
+            font.setBold(true);
+            item->setFont(font);
+        }
+        else
+        {
+            item->setForeground(Qt::gray);
+        }
         m_list->addItem(item);
     }
 

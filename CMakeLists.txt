@@ -8,7 +8,7 @@ set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Sql)
 
 set(SOURCES
     src/main.cpp
@@ -18,6 +18,7 @@ set(SOURCES
     src/api/DriveApi.cpp
     src/api/CopilotApi.cpp
     src/api/ConversationModel.cpp
+    src/api/LocalCache.cpp
     src/models/Conversation.cpp
     src/models/Message.cpp
     src/models/FileAttachment.cpp
@@ -37,6 +38,7 @@ set(HEADERS
     src/api/DriveApi.h
     src/api/CopilotApi.h
     src/api/ConversationModel.h
+    src/api/LocalCache.h
     src/models/Conversation.h
     src/models/Message.h
     src/models/FileAttachment.h
@@ -67,6 +69,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Gui
     Qt6::Widgets
     Qt6::Network
+    Qt6::Sql
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)

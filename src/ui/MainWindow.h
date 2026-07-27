@@ -21,6 +21,7 @@ class ConversationListPane;
 class PromptListPane;
 class ResponsePane;
 class SearchDialog;
+class LocalCache;
 
 class MainWindow : public QMainWindow
 {
@@ -58,6 +59,7 @@ private:
     DriveApi *m_drive;
     CopilotApi *m_copilot;
     ConversationModel *m_convModel;
+    LocalCache *m_cache;
 
     ConversationListPane *m_convPane;
     PromptListPane *m_promptPane;
