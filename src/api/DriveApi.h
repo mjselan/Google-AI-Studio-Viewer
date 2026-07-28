@@ -27,6 +27,7 @@ public:
     void listConversations(const QString &folderId);
     void downloadConversation(const QString &fileId, const QString &fileName);
     void downloadAttachment(const QString &fileId);
+    void searchConversations(const QString &query);
 
     void retryPendingRequests();
 
@@ -34,6 +35,7 @@ signals:
     void folderFound(const QString &folderId);
     void folderNotFound();
     void conversationListReady(const QList<DriveFile> &files);
+    void searchResultsReady(const QList<DriveFile> &results);
     void conversationDownloaded(const QString &fileId, const QString &fileName, const QJsonObject &data);
     void attachmentDownloaded(const QString &fileId, const QByteArray &data, const QString &mimeType);
     void apiError(const QString &error);
@@ -51,5 +53,6 @@ private:
 
     QNetworkAccessManager *m_net;
     QString m_token;
+    QString m_folderId;
     QList<PendingRequest> m_pendingRequests;
 };

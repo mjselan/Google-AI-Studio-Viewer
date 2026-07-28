@@ -23,6 +23,7 @@ public:
     QList<Conversation> allConversations() const;
 
     void sortBy(SortMode mode);
+    void selectByFileId(const QString &fileId);
 
 signals:
     void conversationSelected(int index);

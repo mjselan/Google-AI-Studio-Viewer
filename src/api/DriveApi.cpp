@@ -82,7 +82,10 @@ void DriveApi::findFolder(const QString &folderName)
         if (files.isEmpty())
             emit folderNotFound();
         else
-            emit folderFound(files.first().toObject()["id"].toString());
+        {
+            m_folderId = files.first().toObject()["id"].toString();
+            emit folderFound(m_folderId);
+        }
     });
 }
 
@@ -222,5 +225,61 @@ void DriveApi::downloadAttachment(const QString &fileId)
             QString("[Attachment] downloadAttachment OK: fileId='%1' mime='%2' size=%3")
                 .arg(fileId, mime).arg(data.size()));
         emit attachmentDownloaded(fileId, data, mime);
+    });
+}
+
+void DriveApi::searchConversations(const QString &query)
+{
+    if (m_folderId.isEmpty())
+    {
+        emit searchResultsReady({});
+        return;
+    }
+
+    QUrlQuery q;
+    q.addQueryItem("q", QString("'%1' in parents and fullText contains '%2' and trashed=false")
+                       .arg(m_folderId, query));
+    q.addQueryItem("fields", "files(id,name,modifiedTime,mimeType,fileExtension)");
+    q.addQueryItem("pageSize", "100");
+
+    QUrl url("https://www.googleapis.com/drive/v3/files");
+    url.setQuery(q);
+
+    sendGet(url.toString(), [this](const QJsonObject &response)
+    {
+        QList<DriveFile> results;
+        for (const auto &f : response["files"].toArray())
+        {
+            auto obj = f.toObject();
+            QString mime = obj["mimeType"].toString();
+            QString ext = obj["fileExtension"].toString().toLower();
+
+            if (mime.startsWith("image/") ||
+                mime.startsWith("video/") ||
+                mime.startsWith("audio/") ||
+                mime == "application/pdf" ||
+                mime == "text/csv")
+            {
+                continue;
+            }
+
+            if (!ext.isEmpty())
+            {
+                QStringList attachmentExts = {
+                    "json", "txt", "pdf", "csv", "md", "png", "jpg", "jpeg",
+                    "mp3", "mp4", "wav", "py", "cpp", "h", "js", "html",
+                    "log", "cfg"
+                };
+                if (attachmentExts.contains(ext))
+                    continue;
+            }
+
+            DriveFile df;
+            df.fileId = obj["id"].toString();
+            df.fileName = obj["name"].toString();
+            df.modifiedTime = QDateTime::fromString(obj["modifiedTime"].toString(), Qt::ISODate);
+            results.append(df);
+        }
+        emit searchResultsReady(results);
     });
 }

@@ -2,52 +2,81 @@
 #include <QVBoxLayout>
 #include <QLabel>
 
-SearchDialog::SearchDialog(const QList<Conversation> &conversations,
-                           QWidget *parent)
+SearchDialog::SearchDialog(QWidget *parent)
     : QDialog(parent)
     , m_searchInput(new QLineEdit(this))
     , m_resultsList(new QListWidget(this))
-    , m_conversations(conversations)
+    , m_debounceTimer(new QTimer(this))
 {
     setWindowTitle("Search Conversations");
     resize(500, 400);
 
     auto *layout = new QVBoxLayout(this);
-    layout->addWidget(new QLabel("Search across all conversations:", this));
+    layout->addWidget(new QLabel("Search across all conversations (Google Drive):", this));
     layout->addWidget(m_searchInput);
     layout->addWidget(m_resultsList);
 
     m_searchInput->setPlaceholderText("Type to search...");
+
+    m_debounceTimer->setSingleShot(true);
+    m_debounceTimer->setInterval(500);
+
     connect(m_searchInput, &QLineEdit::textChanged, this, &SearchDialog::onSearchTextChanged);
+    connect(m_debounceTimer, &QTimer::timeout, this, &SearchDialog::onDebounceTimeout);
+    connect(m_resultsList, &QListWidget::itemClicked, this, [this](QListWidgetItem *item)
+    {
+        if (!item)
+            return;
+        QString fileId = item->data(Qt::UserRole).toString();
+        if (fileId.isEmpty())
+            return;
+        QDateTime modTime = item->data(Qt::UserRole + 1).toDateTime();
+        emit resultClicked(fileId, item->text(), modTime);
+    });
 }
 
 void SearchDialog::onSearchTextChanged(const QString &text)
 {
-    m_resultsList->clear();
+    m_debounceTimer->start();
 
+    if (text.trimmed().length() < 2)
+    {
+        m_debounceTimer->stop();
+        m_resultsList->clear();
+    }
+}
+
+void SearchDialog::onDebounceTimeout()
+{
+    QString text = m_searchInput->text().trimmed();
     if (text.length() < 2)
         return;
 
-    QString lower = text.toLower();
+    m_resultsList->clear();
+    m_resultsList->addItem("Searching...");
+    emit searchRequested(text);
+}
 
-    for (const auto &conv : m_conversations)
+void SearchDialog::setResults(const QList<DriveFile> &results)
+{
+    m_resultsList->clear();
+
+    if (results.isEmpty())
     {
-        for (const auto &msg : conv.messages)
-        {
-            if (msg.text.toLower().contains(lower))
-            {
-                QString preview = msg.text.left(120);
-                if (msg.text.length() > 120)
-                    preview += "...";
-
-                auto *item = new QListWidgetItem(
-                    QString("[%1] %2: %3")
-                        .arg(conv.fileName, msg.role, preview));
-                m_resultsList->addItem(item);
-            }
-        }
+        m_resultsList->addItem("No matches found.");
+        return;
     }
 
-    if (m_resultsList->count() == 0 && text.length() >= 2)
-        m_resultsList->addItem("No matches found.");
+    for (const auto &file : results)
+    {
+        auto *item = new QListWidgetItem(file.fileName);
+        item->setData(Qt::UserRole, file.fileId);
+        item->setData(Qt::UserRole + 1, file.modifiedTime);
+        QString dateStr = file.modifiedTime.isValid()
+            ? file.modifiedTime.toLocalTime().toString("yyyy-MM-dd hh:mm:ss")
+            : "";
+        if (!dateStr.isEmpty())
+            item->setToolTip(dateStr);
+        m_resultsList->addItem(item);
+    }
 }

@@ -533,7 +533,40 @@ void MainWindow::onPromptSelected(int pairIndex)
 void MainWindow::onSearchTriggered()
 {
     if (!m_searchDlg)
-        m_searchDlg = new SearchDialog(m_convPane->allConversations(), this);
+    {
+        m_searchDlg = new SearchDialog(this);
+        connect(m_searchDlg, &SearchDialog::searchRequested, this, [this](const QString &query)
+        {
+            m_drive->searchConversations(query);
+        });
+        connect(m_drive, &DriveApi::searchResultsReady, m_searchDlg, &SearchDialog::setResults);
+        connect(m_searchDlg, &SearchDialog::resultClicked, this, [this](const QString &fileId, const QString &fileName, const QDateTime &modTime)
+        {
+            // Check if this conversation is already in the pane
+            for (int i = 0; i < m_convPane->conversationCount(); ++i)
+            {
+                if (m_convPane->conversationAt(i).fileId == fileId)
+                {
+                    m_convPane->selectByFileId(fileId);
+                    return;
+                }
+            }
+
+            // Not in list — add as a stub and trigger load
+            DriveFile df;
+            df.fileId = fileId;
+            df.fileName = fileName;
+            df.modifiedTime = modTime;
+            m_conversationFiles.append(df);
+
+            Conversation stub;
+            stub.fileId = fileId;
+            stub.fileName = fileName;
+            stub.lastModified = df.modifiedTime;
+            m_convPane->addConversation(stub);
+            m_convPane->selectByFileId(fileId);
+        });
+    }
 
     m_searchDlg->show();
     m_searchDlg->raise();

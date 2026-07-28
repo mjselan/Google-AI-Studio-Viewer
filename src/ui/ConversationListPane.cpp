@@ -2,6 +2,7 @@
 #include "api/DriveApi.h"
 #include <QVBoxLayout>
 #include <QLabel>
+#include <QAbstractItemView>
 #include <algorithm>
 
 ConversationListPane::ConversationListPane(QWidget *parent)
@@ -177,4 +178,21 @@ void ConversationListPane::sortBy(SortMode mode)
     m_sortMode = mode;
     applySort();
     refreshList();
+}
+
+void ConversationListPane::selectByFileId(const QString &fileId)
+{
+    for (int row = 0; row < m_rowToConv.size(); ++row)
+    {
+        int convIdx = m_rowToConv[row];
+        if (m_conversations[convIdx].fileId == fileId)
+        {
+            m_list->blockSignals(true);
+            m_list->setCurrentRow(row);
+            m_list->scrollToItem(m_list->item(row), QAbstractItemView::PositionAtCenter);
+            m_list->blockSignals(false);
+            emit conversationSelected(convIdx);
+            return;
+        }
+    }
 }
