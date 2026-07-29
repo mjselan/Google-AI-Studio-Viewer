@@ -24,7 +24,6 @@ void LocalCache::init()
 
     if (!m_db.open())
     {
-        Logger::instance().error("[LocalCache] Failed to open database: " + m_db.lastError().text());
         return;
     }
 
@@ -36,12 +35,10 @@ void LocalCache::init()
             "modified_time TEXT, "
             "json_data TEXT)"))
     {
-        Logger::instance().error("[LocalCache] Failed to create table: " + query.lastError().text());
         return;
     }
 
     m_initialized = true;
-    Logger::instance().info("[LocalCache] Initialized at " + dbPath);
 }
 
 void LocalCache::saveConversation(const QString &fileId, const QString &fileName,
@@ -60,7 +57,7 @@ void LocalCache::saveConversation(const QString &fileId, const QString &fileName
     query.bindValue(":jdata", QString(QJsonDocument(data).toJson(QJsonDocument::Compact)));
 
     if (!query.exec())
-        Logger::instance().error("[LocalCache] save failed: " + query.lastError().text());
+        return;
 }
 
 QJsonObject LocalCache::loadConversation(const QString &fileId)

@@ -42,20 +42,6 @@ Conversation ConversationModel::parseConversation(const QString &fileId,
 
     buildPairs(conv);
 
-    // Log message order for attachment debugging
-    for (int i = 0; i < conv.messages.size(); ++i)
-    {
-        const auto &m = conv.messages[i];
-        if (!m.driveDocumentId.isEmpty() || m.role == "user")
-            Logger::instance().info(
-                QString("[Attachment] Msg[%1] role='%2' doc='%3' text='%4' time=%5")
-                    .arg(i)
-                    .arg(m.role)
-                    .arg(m.driveDocumentId)
-                    .arg(m.text.left(40))
-                    .arg(m.createTime.toString(Qt::ISODate)));
-    }
-
     return conv;
 }
 
@@ -76,15 +62,6 @@ void ConversationModel::buildPairs(Conversation &conv) const
                 bool currentHasText = !currentPrompt.text.isEmpty();
                 bool newHasText = !msg.text.isEmpty();
 
-                Logger::instance().info(
-                    QString("[Attachment] Merge check at %1: "
-                            "current(doc='%2' text=%3) new(doc='%4' text=%5)")
-                        .arg(msg.createTime.toString(Qt::ISODate))
-                        .arg(currentPrompt.driveDocumentId)
-                        .arg(currentHasText)
-                        .arg(msg.driveDocumentId)
-                        .arg(newHasText));
-
                 // Prefer the message that has text as the base
                 if (newHasText && !currentHasText)
                 {
@@ -99,10 +76,6 @@ void ConversationModel::buildPairs(Conversation &conv) const
                         currentPrompt.inlineImageData = imgData;
                         currentPrompt.inlineImageMime = imgMime;
                     }
-                    Logger::instance().info(
-                        QString("[Attachment] Merged doc-only into text prompt: docId='%1' text='%2'")
-                            .arg(currentPrompt.driveDocumentId)
-                            .arg(currentPrompt.text.left(60)));
                 }
                 else if (currentHasText && !newHasText)
                 {
@@ -113,10 +86,6 @@ void ConversationModel::buildPairs(Conversation &conv) const
                         currentPrompt.inlineImageData = msg.inlineImageData;
                         currentPrompt.inlineImageMime = msg.inlineImageMime;
                     }
-                    Logger::instance().info(
-                        QString("[Attachment] Merged doc into text prompt: docId='%1' text='%2'")
-                            .arg(currentPrompt.driveDocumentId)
-                            .arg(currentPrompt.text.left(60)));
                 }
                 else if (!currentHasText && !newHasText)
                 {
@@ -145,12 +114,6 @@ void ConversationModel::buildPairs(Conversation &conv) const
                 pair.prompt = currentPrompt;
                 pair.responses.append(msg);
                 conv.pairs.append(pair);
-                if (!pair.prompt.driveDocumentId.isEmpty())
-                    Logger::instance().info(
-                        QString("[Attachment] Pair %1 created with docId='%2' text='%3'")
-                            .arg(conv.pairs.size() - 1)
-                            .arg(pair.prompt.driveDocumentId)
-                            .arg(pair.prompt.text.left(60)));
             }
             else
             {
@@ -176,11 +139,6 @@ void ConversationModel::buildPairs(Conversation &conv) const
             Conversation::PromptResponsePair pair;
             pair.prompt = currentPrompt;
             conv.pairs.append(pair);
-            if (!pair.prompt.driveDocumentId.isEmpty())
-                Logger::instance().info(
-                    QString("[Attachment] Final pair %1 (no response) with docId='%2'")
-                        .arg(conv.pairs.size() - 1)
-                        .arg(pair.prompt.driveDocumentId));
         }
     }
 }

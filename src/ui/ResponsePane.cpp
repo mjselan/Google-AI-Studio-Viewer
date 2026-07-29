@@ -74,9 +74,6 @@ void ResponsePane::showResponse(const Conversation::PromptResponsePair &pair,
 
     if (!pair.prompt.driveDocumentId.isEmpty())
     {
-        Logger::instance().info(
-            QString("[Attachment] showResponse: displaying pair with docId='%1'")
-                .arg(pair.prompt.driveDocumentId));
         appendFileAttachment(pair.prompt.driveDocumentId, drive);
     }
 
@@ -126,13 +123,9 @@ void ResponsePane::appendFileAttachment(const QString &fileId, DriveApi *drive)
 {
     if (!drive)
     {
-        Logger::instance().warn(
-            QString("[Attachment] appendFileAttachment: drive is null for fileId='%1'").arg(fileId));
         return;
     }
 
-    Logger::instance().info(
-        QString("[Attachment] appendFileAttachment: downloading fileId='%1'").arg(fileId));
     m_browser->append("<hr><b>Attached file:</b> " + fileId + "<br>");
 
     auto *preview = new FilePreviewWidget(fileId, this);

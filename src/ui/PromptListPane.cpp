@@ -65,13 +65,6 @@ void PromptListPane::refreshList()
                 .arg(pair.prompt.tokenCount)
                 .arg(dateStr));
         m_list->addItem(item);
-
-        if (!pair.prompt.driveDocumentId.isEmpty())
-            Logger::instance().info(
-                QString("[Attachment] PromptList: pair %1 docId='%2' text='%3'")
-                    .arg(i)
-                    .arg(pair.prompt.driveDocumentId)
-                    .arg(pair.prompt.text.left(60)));
     }
 
     m_list->blockSignals(false);
