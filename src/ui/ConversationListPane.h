@@ -27,6 +27,7 @@ public:
 
 signals:
     void conversationSelected(int index);
+    void refreshRequested(const QString &fileId, const QString &fileName);
 
 private:
     void refreshList();

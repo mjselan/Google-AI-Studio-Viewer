@@ -2,6 +2,7 @@
 #include "api/DriveApi.h"
 #include <QVBoxLayout>
 #include <QLabel>
+#include <QMenu>
 #include <QAbstractItemView>
 #include <algorithm>
 
@@ -23,6 +24,29 @@ ConversationListPane::ConversationListPane(QWidget *parent)
             int convIndex = m_rowToConv[row];
             emit conversationSelected(convIndex);
         }
+    });
+
+    m_list->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_list, &QWidget::customContextMenuRequested, this, [this](const QPoint &pos)
+    {
+        QListWidgetItem *item = m_list->itemAt(pos);
+        if (!item)
+            return;
+
+        int row = m_list->row(item);
+        if (row < 0 || row >= m_rowToConv.size())
+            return;
+
+        int convIdx = m_rowToConv[row];
+        const auto &conv = m_conversations[convIdx];
+
+        QMenu menu(this);
+        QAction *refreshAction = menu.addAction("Refresh");
+        connect(refreshAction, &QAction::triggered, this, [this, conv]()
+        {
+            emit refreshRequested(conv.fileId, conv.fileName);
+        });
+        menu.exec(m_list->mapToGlobal(pos));
     });
 }
 

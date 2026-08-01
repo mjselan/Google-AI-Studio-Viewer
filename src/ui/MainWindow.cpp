@@ -107,6 +107,11 @@ MainWindow::MainWindow(QWidget *parent)
 
     connect(m_convPane, &ConversationListPane::conversationSelected,
         this, &MainWindow::onConversationSelected);
+    connect(m_convPane, &ConversationListPane::refreshRequested, this,
+        [this](const QString &fileId, const QString &fileName)
+        {
+            m_drive->downloadConversation(fileId, fileName);
+        });
     connect(m_promptPane, &PromptListPane::promptSelected,
         this, &MainWindow::onPromptSelected);
 
