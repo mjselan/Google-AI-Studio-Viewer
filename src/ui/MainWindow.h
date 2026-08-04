@@ -49,6 +49,7 @@ private slots:
 private:
     void setupUi();
     void setupToolbar();
+    void setupMenuBar();
     void setupStatusBar();
     void loadConversation(const QString &fileId, const QString &fileName);
     void switchToGoogleBackend();

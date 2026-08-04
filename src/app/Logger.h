@@ -13,6 +13,8 @@ public:
     static Logger &instance();
 
     void init(const QString &filePath);
+    void deleteLogFile();
+    QString logFilePath();
     void log(Level level, const QString &message);
     void debug(const QString &message) { log(Debug, message); }
     void info(const QString &message)  { log(Info, message); }

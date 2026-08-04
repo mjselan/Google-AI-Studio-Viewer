@@ -42,6 +42,48 @@ Conversation ConversationModel::parseConversation(const QString &fileId,
 
     buildPairs(conv);
 
+    // Debug: record which pairs carry attachments and whether any attachment
+    // message got dropped during pairing (never became a pair prompt).
+    for (int i = 0; i < conv.pairs.size(); ++i)
+    {
+        const auto &p = conv.pairs[i].prompt;
+        Logger::instance().debug(
+            QString("[Attachment] Pair %1/%2 prompt: docId='%3' hasText=%4 imageLen=%5 createTime='%6'")
+                .arg(i)
+                .arg(conv.pairs.size())
+                .arg(p.driveDocumentId)
+                .arg(p.text.isEmpty() ? "false" : "true")
+                .arg(p.inlineImageData.size())
+                .arg(p.createTime.toString(Qt::ISODate)));
+    }
+
+    for (const auto &m : conv.messages)
+    {
+        if (m.driveDocumentId.isEmpty() && m.inlineImageData.isEmpty())
+            continue;
+
+        bool inPairPrompt = false;
+        for (const auto &p : conv.pairs)
+        {
+            if (p.prompt.driveDocumentId == m.driveDocumentId &&
+                p.prompt.createTime == m.createTime)
+            {
+                inPairPrompt = true;
+                break;
+            }
+        }
+        if (!inPairPrompt)
+        {
+            Logger::instance().warn(
+                QString("[Attachment] LOST during pairing: role='%1' docId='%2' imageLen=%3 "
+                        "text='%4' createTime='%5' did not end up as any pair prompt")
+                    .arg(m.role, m.driveDocumentId)
+                    .arg(m.inlineImageData.size())
+                    .arg(m.text.left(40))
+                    .arg(m.createTime.toString(Qt::ISODate)));
+        }
+    }
+
     return conv;
 }
 

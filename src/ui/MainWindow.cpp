@@ -9,6 +9,7 @@
 #include "api/ConversationModel.h"
 #include "api/LocalCache.h"
 #include "models/Conversation.h"
+#include "app/Logger.h"
 #include <QMessageBox>
 #include <QVBoxLayout>
 #include <QHBoxLayout>
@@ -20,6 +21,8 @@
 #include <QFile>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMenu>
+#include <QMenuBar>
 
 //#define MAX_CONVERSATIONS 4
 
@@ -37,6 +40,7 @@ MainWindow::MainWindow(QWidget *parent)
 {
     setupUi();
     setupToolbar();
+    setupMenuBar();
     setupStatusBar();
     m_cache->init();
 
@@ -224,6 +228,21 @@ void MainWindow::setupToolbar()
 void MainWindow::setupStatusBar()
 {
     statusBar()->showMessage("Ready. Sign in to get started.");
+}
+
+void MainWindow::setupMenuBar()
+{
+    QMenu *fileMenu = menuBar()->addMenu("&File");
+
+    QAction *deleteLog = fileMenu->addAction("Delete log file");
+    connect(deleteLog, &QAction::triggered, this, [this]()
+    {
+        QString path = Logger::instance().logFilePath();
+        Logger::instance().deleteLogFile();
+        statusBar()->showMessage(path.isEmpty()
+            ? "No log file to delete."
+            : "Log file deleted: " + path);
+    });
 }
 
 void MainWindow::onBackendChanged(int index)

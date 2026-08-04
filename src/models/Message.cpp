@@ -1,4 +1,5 @@
 #include "Message.h"
+#include "app/Logger.h"
 #include <QJsonDocument>
 
 Message Message::fromJson(const QJsonObject &obj)
@@ -40,6 +41,22 @@ Message Message::fromJson(const QJsonObject &obj)
             m.inlineImageMime = inlineData["mimeType"].toString();
             m.inlineImageData = inlineData["data"].toString();
         }
+    }
+
+    // Debug: confirm whether any attachment was parsed from the raw JSON chunk
+    bool hadDriveKey = obj.contains("driveDocument") || obj.contains("driveImage");
+    if (!m.driveDocumentId.isEmpty() || !m.inlineImageData.isEmpty() || hadDriveKey)
+    {
+        Logger::instance().debug(
+            QString("[Attachment] Msg::fromJson role='%1' rawHadDriveKey=%2 driveDocId='%3' "
+                    "imageMime='%4' imageLen=%5 text='%6' time='%7'")
+                .arg(m.role)
+                .arg(hadDriveKey ? "true" : "false")
+                .arg(m.driveDocumentId,
+                     m.inlineImageMime)
+                .arg(m.inlineImageData.size())
+                .arg(m.text.left(40))
+                .arg(m.createTime.toString(Qt::ISODate)));
     }
 
     return m;

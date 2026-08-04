@@ -1,5 +1,6 @@
 #include "FilePreviewWidget.h"
 #include "ImageViewerDialog.h"
+#include "app/Logger.h"
 #include <QVBoxLayout>
 #include <QHBoxLayout>
 #include <QFileDialog>
@@ -99,8 +100,14 @@ void FilePreviewWidget::setContent(const QByteArray &data, const QString &mimeTy
 {
     m_mimeType = mimeType;
 
+    Logger::instance().info(
+        QString("[Attachment] FilePreviewWidget::setContent: fileId='%1' mime='%2' dataSize=%3")
+            .arg(m_fileId, mimeType).arg(data.size()));
+
     if (mimeType.startsWith("text/") || mimeType.contains("json") || mimeType.contains("javascript"))
     {
+        Logger::instance().info(
+            QString("[Attachment] FilePreviewWidget: rendering as text for fileId='%1'").arg(m_fileId));
         m_textView->setPlainText(QString::fromUtf8(data));
         m_stack->setCurrentIndex(0);
         m_stack->setVisible(true);
@@ -112,6 +119,9 @@ void FilePreviewWidget::setContent(const QByteArray &data, const QString &mimeTy
         QPixmap pix;
         if (pix.loadFromData(data))
         {
+            Logger::instance().info(
+                QString("[Attachment] FilePreviewWidget: image decoded OK for fileId='%1'")
+                    .arg(m_fileId));
             m_pixmap = pix;
             m_zoomScale = 1.0;
             m_imageView->setPixmap(pix.scaledToWidth(400, Qt::SmoothTransformation));
@@ -121,9 +131,19 @@ void FilePreviewWidget::setContent(const QByteArray &data, const QString &mimeTy
             m_viewBtn->setVisible(true);
             m_imageToolbar->setVisible(true);
         }
+        else
+        {
+            Logger::instance().warn(
+                QString("[Attachment] FilePreviewWidget: IMAGE DECODE FAILED mime='%1' size=%2 "
+                        "for fileId='%3'")
+                    .arg(mimeType).arg(data.size()).arg(m_fileId));
+        }
     }
     else
     {
+        Logger::instance().info(
+            QString("[Attachment] FilePreviewWidget: unknown mime '%1' for fileId='%2', no preview")
+                .arg(mimeType, m_fileId));
         m_stack->setVisible(false);
         m_downloadBtn->setVisible(true);
         m_viewBtn->setVisible(false);

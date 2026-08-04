@@ -68,6 +68,16 @@ void ResponsePane::showResponse(const Conversation::PromptResponsePair &pair,
     removeFilePreviews();
     m_browser->clear();
 
+    Logger::instance().info(
+        QString("[Attachment] showResponse: prompt hasDoc=%1 docId='%2' hasInline=%3 imageLen=%4 "
+                "text='%5' responses=%6")
+            .arg(pair.prompt.driveDocumentId.isEmpty() ? "false" : "true")
+            .arg(pair.prompt.driveDocumentId)
+            .arg(pair.prompt.inlineImageData.isEmpty() ? "false" : "true")
+            .arg(pair.prompt.inlineImageData.size())
+            .arg(pair.prompt.text.left(40))
+            .arg(pair.responses.size()));
+
     m_browser->setHtml(
         "<h3>Prompt</h3><div style='padding:8px; margin:4px 0;'>"
         + markdownToHtml(pair.prompt.text) + "</div><hr>");
@@ -123,8 +133,13 @@ void ResponsePane::appendFileAttachment(const QString &fileId, DriveApi *drive)
 {
     if (!drive)
     {
+        Logger::instance().warn(
+            QString("[Attachment] appendFileAttachment: drive is null for fileId='%1'").arg(fileId));
         return;
     }
+
+    Logger::instance().info(
+        QString("[Attachment] appendFileAttachment: requesting download for fileId='%1'").arg(fileId));
 
     m_browser->append("<hr><b>Attached file:</b> " + fileId + "<br>");
 
@@ -137,8 +152,21 @@ void ResponsePane::appendFileAttachment(const QString &fileId, DriveApi *drive)
     connect(drive, &DriveApi::attachmentDownloaded, this,
         [this, safePreview, fileId](const QString &id, const QByteArray &data, const QString &mimeType)
         {
-            if (id == fileId && safePreview)
+            bool match = (id == fileId);
+            Logger::instance().info(
+                QString("[Attachment] attachmentDownloaded: expected='%1' got='%2' match=%3 "
+                        "dataSize=%4 mime='%5'")
+                    .arg(fileId, id)
+                    .arg(match ? "true" : "false")
+                    .arg(data.size())
+                    .arg(mimeType));
+
+            if (match && safePreview)
+            {
+                Logger::instance().info(
+                    QString("[Attachment] setting content on preview for fileId='%1'").arg(fileId));
                 safePreview->setContent(data, mimeType);
+            }
         });
 
     drive->downloadAttachment(fileId);

@@ -33,7 +33,27 @@ void Logger::init(const QString &filePath)
         m_file.close();
 
     m_file.setFileName(filePath);
-    m_file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text);
+    m_file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
+}
+
+void Logger::deleteLogFile()
+{
+#ifdef NO_LOGGING
+    return;
+#endif
+    QMutexLocker lock(&m_mutex);
+    if (m_file.isOpen())
+        m_file.close();
+    if (!m_file.fileName().isEmpty())
+        (void)QFile::remove(m_file.fileName());
+    if (!m_file.fileName().isEmpty())
+        (void)m_file.open(QIODevice::WriteOnly | QIODevice::Append | QIODevice::Text);
+}
+
+QString Logger::logFilePath()
+{
+    QMutexLocker lock(&m_mutex);
+    return m_file.fileName();
 }
 
 void Logger::log(Level level, const QString &message)
