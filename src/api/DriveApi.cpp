@@ -12,6 +12,14 @@ DriveApi::DriveApi(QObject *parent)
 {
 }
 
+// Escape single quotes in values embedded in Drive query strings.
+static QString escapeQueryValue(const QString &value)
+{
+    QString escaped = value;
+    escaped.replace('\'', "\\'");
+    return escaped;
+}
+
 void DriveApi::setAccessToken(const QString &token)
 {
     m_token = token;
@@ -63,13 +71,24 @@ void DriveApi::retryPendingRequests()
     QList<PendingRequest> retries = m_pendingRequests;
     m_pendingRequests.clear();
     for (const auto &pending : retries)
-        sendGet(pending.url, pending.callback);
+    {
+        if (pending.binary)
+        {
+            // Binary payloads (attachments) would be corrupted by sendGet's
+            // JSON parsing; the callback re-issues the raw download itself.
+            pending.callback(QJsonObject());
+        }
+        else
+        {
+            sendGet(pending.url, pending.callback);
+        }
+    }
 }
 
 void DriveApi::findFolder(const QString &folderName)
 {
     QUrlQuery query;
-    query.addQueryItem("q", QString("name='%1' and mimeType='application/vnd.google-apps.folder' and trashed=false").arg(folderName));
+    query.addQueryItem("q", QString("name='%1' and mimeType='application/vnd.google-apps.folder' and trashed=false").arg(escapeQueryValue(folderName)));
     query.addQueryItem("fields", "files(id,name)");
     query.addQueryItem("pageSize", "10");
 
@@ -202,6 +221,7 @@ void DriveApi::downloadAttachment(const QString &fileId)
         {
             PendingRequest pending;
             pending.url = reply->url().toString();
+            pending.binary = true;
             pending.callback = [this, fileId](const QJsonObject &)
             {
                 downloadAttachment(fileId);
@@ -238,7 +258,7 @@ void DriveApi::searchConversations(const QString &query)
 
     QUrlQuery q;
     q.addQueryItem("q", QString("'%1' in parents and fullText contains '%2' and trashed=false")
-                       .arg(m_folderId, query));
+                       .arg(m_folderId, escapeQueryValue(query)));
     q.addQueryItem("fields", "files(id,name,modifiedTime,mimeType,fileExtension)");
     q.addQueryItem("pageSize", "100");
 

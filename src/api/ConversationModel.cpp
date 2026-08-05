@@ -29,12 +29,15 @@ Conversation ConversationModel::parseConversation(const QString &fileId,
     for (const auto &chunk : chunks)
         conv.messages.append(Message::fromJson(chunk.toObject()));
 
-    // Sort messages chronologically; user before model for same timestamp
+    // Sort messages chronologically; user before model for same timestamp.
+    // Compare epoch milliseconds to stay robust across timezone offsets.
     std::sort(conv.messages.begin(), conv.messages.end(),
         [](const Message &a, const Message &b)
         {
-            if (a.createTime != b.createTime)
-                return a.createTime < b.createTime;
+            qint64 ta = a.createTime.isValid() ? a.createTime.toMSecsSinceEpoch() : 0;
+            qint64 tb = b.createTime.isValid() ? b.createTime.toMSecsSinceEpoch() : 0;
+            if (ta != tb)
+                return ta < tb;
             if (a.role != b.role)
                 return a.role == "user";
             return false;

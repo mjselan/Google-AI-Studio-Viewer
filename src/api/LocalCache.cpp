@@ -19,7 +19,16 @@ void LocalCache::init()
     QDir().mkpath(dataDir);
     QString dbPath = dataDir + "/viewer_cache.db";
 
-    m_db = QSqlDatabase::addDatabase("QSQLITE");
+    // Use a unique, named connection so re-initialization never triggers Qt's
+    // "connection 'qt_sql_default_connection' already exists" warning.
+    static const QString connectionName = QStringLiteral("ViewerCacheConnection");
+    if (QSqlDatabase::contains(connectionName))
+    {
+        QSqlDatabase existing = QSqlDatabase::database(connectionName, false);
+        if (!existing.isOpen())
+            QSqlDatabase::removeDatabase(connectionName);
+    }
+    m_db = QSqlDatabase::addDatabase("QSQLITE", connectionName);
     m_db.setDatabaseName(dbPath);
 
     if (!m_db.open())

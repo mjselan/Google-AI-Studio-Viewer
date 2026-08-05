@@ -46,6 +46,9 @@ private:
     {
         QString url;
         std::function<void(const QJsonObject &)> callback;
+        // true for binary media downloads (attachments); their callback
+        // re-issues the raw GET and must NOT be replayed through sendGet().
+        bool binary = false;
     };
 
     void sendGet(const QString &url, std::function<void(const QJsonObject &)> callback);

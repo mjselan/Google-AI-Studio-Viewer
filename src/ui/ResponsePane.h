@@ -4,12 +4,11 @@
 #include <QTextBrowser>
 #include <QVBoxLayout>
 #include <QCheckBox>
-#include <QList>
-#include <QPointer>
+#include <QByteArray>
+#include <QMetaObject>
 #include "models/Conversation.h"
 
 class DriveApi;
-class FilePreviewWidget;
 
 class ResponsePane : public QWidget
 {
@@ -22,12 +21,13 @@ public:
     void clear();
 
 private:
-    void removeFilePreviews();
     void appendModelResponse(const QString &text, bool isThought, bool showThoughts);
-    void appendFileAttachment(const QString &fileId, DriveApi *drive);
+    void requestAttachment(const QString &fileId, DriveApi *drive);
+    void insertAttachmentInline(const QByteArray &data, const QString &mimeType,
+                                const QString &fileId);
     void appendInlineImage(const QString &base64data, const QString &mimeType);
 
     QTextBrowser *m_browser;
     QVBoxLayout *m_layout;
-    QList<FilePreviewWidget*> m_filePreviews;
+    QMetaObject::Connection m_attachmentConn;
 };

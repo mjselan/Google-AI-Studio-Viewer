@@ -32,7 +32,6 @@ MainWindow::MainWindow(QWidget *parent)
     , m_drive(new DriveApi(this))
     , m_copilot(new CopilotApi(this))
     , m_convModel(new ConversationModel(this))
-    , m_cache(new LocalCache())
     , m_convPane(new ConversationListPane(this))
     , m_promptPane(new PromptListPane(this))
     , m_responsePane(new ResponsePane(this))
@@ -42,7 +41,7 @@ MainWindow::MainWindow(QWidget *parent)
     setupToolbar();
     setupMenuBar();
     setupStatusBar();
-    m_cache->init();
+    m_cache.init();
 
     connect(m_auth, &AuthManager::authSuccess, this, [this](const QString &message)
     {
@@ -80,15 +79,16 @@ MainWindow::MainWindow(QWidget *parent)
                     break;
                 }
             }
-            m_cache->saveConversation(fileId, fileName, modTime, data);
+            m_cache.saveConversation(fileId, fileName, modTime, data);
 
             Conversation conv = m_convModel->parseConversation(fileId, fileName, data);
             m_convPane->addConversation(conv);
 
-            if (m_selectedConvIndex >= 0 && m_selectedConvIndex < m_convPane->conversationCount())
+            if (m_selectedFileId == fileId)
             {
-                if (m_convPane->conversationAt(m_selectedConvIndex).fileId == fileId)
-                    onConversationSelected(m_selectedConvIndex);
+                int idx = indexForFileId();
+                if (idx >= 0)
+                    onConversationSelected(idx);
             }
         });
     connect(m_drive, &DriveApi::apiError, this, [this](const QString &err)
@@ -122,15 +122,9 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_auth, &AuthManager::authCodeRequired, this,
         [this](const QString &authUrl)
         {
-            bool ok;
-            QString code = QInputDialog::getText(this, "Google Auth",
-                "1. Sign in with the browser that opened.\n"
-                "2. Copy the code shown by Google.\n"
-                "3. Paste it here and press OK.\n\n"
-                "If the browser didn't open, visit:\n" + authUrl,
-                QLineEdit::Normal, QString(), &ok);
-            if (ok && !code.trimmed().isEmpty())
-                m_auth->submitAuthCode(code.trimmed());
+            Q_UNUSED(authUrl)
+            statusBar()->showMessage(
+                "Sign in in progress. Complete the authorization in your browser...");
         });
 
     connect(m_copilot, &CopilotApi::connected, this, &MainWindow::onCopilotConnected);
@@ -194,7 +188,7 @@ void MainWindow::setupToolbar()
     m_backendCombo = new QComboBox(this);
     m_backendCombo->addItems({"Google AI Studio", "Local Server (Copilot)"});
     m_toolbar->addWidget(m_backendCombo);
-    connect(m_backendCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+    connect(m_backendCombo, &QComboBox::currentIndexChanged,
         this, &MainWindow::onBackendChanged);
 
     m_toolbar->addSeparator();
@@ -221,7 +215,7 @@ void MainWindow::setupToolbar()
     m_sortCombo = new QComboBox(this);
     m_sortCombo->addItems({"Newest First", "Oldest First", "Alphabetical A-Z", "Alphabetical Z-A"});
     m_toolbar->addWidget(m_sortCombo);
-    connect(m_sortCombo, QOverload<int>::of(&QComboBox::currentIndexChanged),
+    connect(m_sortCombo, &QComboBox::currentIndexChanged,
         this, &MainWindow::onSortChanged);
 }
 
@@ -476,10 +470,10 @@ void MainWindow::onConversationsLoaded(const QList<DriveFile> &files)
 
     for (const auto &f : files)
     {
-        QDateTime cachedModTime = m_cache->getModifiedTime(f.fileId);
+        QDateTime cachedModTime = m_cache.getModifiedTime(f.fileId);
         if (cachedModTime.isValid() && cachedModTime.toSecsSinceEpoch() == f.modifiedTime.toSecsSinceEpoch())
         {
-            QJsonObject data = m_cache->loadConversation(f.fileId);
+            QJsonObject data = m_cache.loadConversation(f.fileId);
             if (!data.isEmpty())
             {
                 Conversation parsed = m_convModel->parseConversation(f.fileId, f.fileName, data);
@@ -494,15 +488,15 @@ void MainWindow::onConversationSelected(int index)
     if (index < 0 || index >= m_convPane->conversationCount())
         return;
 
-    m_selectedConvIndex = index;
     const auto &conv = m_convPane->conversationAt(index);
+    m_selectedFileId = conv.fileId;
 
     if (conv.model.isEmpty() && conv.messages.isEmpty())
     {
-        QDateTime cachedModTime = m_cache->getModifiedTime(conv.fileId);
+        QDateTime cachedModTime = m_cache.getModifiedTime(conv.fileId);
         if (cachedModTime.isValid() && cachedModTime.toSecsSinceEpoch() == conv.lastModified.toSecsSinceEpoch())
         {
-            QJsonObject data = m_cache->loadConversation(conv.fileId);
+            QJsonObject data = m_cache.loadConversation(conv.fileId);
             if (!data.isEmpty())
             {
                 Conversation parsed = m_convModel->parseConversation(conv.fileId, conv.fileName, data);
@@ -510,7 +504,11 @@ void MainWindow::onConversationSelected(int index)
 
                 m_promptPane->clear();
                 m_responsePane->clear();
-                onConversationSelected(index);
+
+                // addConversation may re-sort the list, so re-locate by fileId.
+                int newIndex = indexForFileId();
+                if (newIndex >= 0)
+                    onConversationSelected(newIndex);
                 return;
             }
         }
@@ -535,14 +533,27 @@ void MainWindow::onConversationSelected(int index)
             .arg(conv.totalTokenCount()));
 }
 
+int MainWindow::indexForFileId() const
+{
+    if (m_selectedFileId.isEmpty())
+        return -1;
+    for (int i = 0; i < m_convPane->conversationCount(); ++i)
+    {
+        if (m_convPane->conversationAt(i).fileId == m_selectedFileId)
+            return i;
+    }
+    return -1;
+}
+
 void MainWindow::onPromptSelected(int pairIndex)
 {
-    if (m_selectedConvIndex < 0)
+    int idx = indexForFileId();
+    if (idx < 0)
     {
         return;
     }
 
-    const auto &conv = m_convPane->conversationAt(m_selectedConvIndex);
+    const auto &conv = m_convPane->conversationAt(idx);
     if (pairIndex < 0 || pairIndex >= conv.pairs.size())
     {
         return;
@@ -600,7 +611,7 @@ void MainWindow::onSearchTriggered()
 void MainWindow::onToggleThoughts(bool visible)
 {
     Q_UNUSED(visible)
-    if (m_selectedConvIndex >= 0)
+    if (indexForFileId() >= 0)
     {
         int promptIndex = m_promptPane->currentIndex();
         if (promptIndex >= 0)

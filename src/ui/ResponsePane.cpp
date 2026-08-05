@@ -1,5 +1,4 @@
 #include "ResponsePane.h"
-#include "FilePreviewWidget.h"
 #include "api/DriveApi.h"
 #include "app/Logger.h"
 #include <QPixmap>
@@ -10,6 +9,7 @@
 #include <QTextDocument>
 #include <QScrollBar>
 #include <QRegularExpression>
+#include <QUrl>
 
 // Convert Google AI markdown to clean HTML for QTextBrowser
 static QString markdownToHtml(const QString &markdown)
@@ -49,6 +49,14 @@ static QString markdownToHtml(const QString &markdown)
     return body;
 }
 
+// Cap image width so huge attachments don't blow up the layout.
+static QPixmap fitImageWidth(const QPixmap &src, int maxWidth = 640)
+{
+    if (src.width() <= maxWidth)
+        return src;
+    return src.scaledToWidth(maxWidth, Qt::SmoothTransformation);
+}
+
 ResponsePane::ResponsePane(QWidget *parent)
     : QWidget(parent)
     , m_browser(new QTextBrowser(this))
@@ -65,7 +73,10 @@ ResponsePane::ResponsePane(QWidget *parent)
 void ResponsePane::showResponse(const Conversation::PromptResponsePair &pair,
                                 bool showThoughts, DriveApi *drive)
 {
-    removeFilePreviews();
+    if (m_attachmentConn)
+        disconnect(m_attachmentConn);
+    m_attachmentConn = QMetaObject::Connection();
+
     m_browser->clear();
 
     Logger::instance().info(
@@ -84,7 +95,7 @@ void ResponsePane::showResponse(const Conversation::PromptResponsePair &pair,
 
     if (!pair.prompt.driveDocumentId.isEmpty())
     {
-        appendFileAttachment(pair.prompt.driveDocumentId, drive);
+        requestAttachment(pair.prompt.driveDocumentId, drive);
     }
 
     if (!pair.prompt.inlineImageData.isEmpty())
@@ -129,28 +140,26 @@ void ResponsePane::appendModelResponse(const QString &text, bool isThought, bool
     m_browser->append(html);
 }
 
-void ResponsePane::appendFileAttachment(const QString &fileId, DriveApi *drive)
+void ResponsePane::requestAttachment(const QString &fileId, DriveApi *drive)
 {
     if (!drive)
     {
         Logger::instance().warn(
-            QString("[Attachment] appendFileAttachment: drive is null for fileId='%1'").arg(fileId));
+            QString("[Attachment] requestAttachment: drive is null for fileId='%1'").arg(fileId));
         return;
     }
 
     Logger::instance().info(
-        QString("[Attachment] appendFileAttachment: requesting download for fileId='%1'").arg(fileId));
+        QString("[Attachment] requestAttachment: requesting download for fileId='%1'").arg(fileId));
 
-    m_browser->append("<hr><b>Attached file:</b> " + fileId + "<br>");
+    m_browser->append(
+        QString("<p><i>[Downloading attachment %1...]</i></p>").arg(fileId.toHtmlEscaped()));
 
-    auto *preview = new FilePreviewWidget(fileId, this);
-    m_layout->addWidget(preview);
-    m_filePreviews.append(preview);
-
-    QPointer<FilePreviewWidget> safePreview(preview);
-
-    connect(drive, &DriveApi::attachmentDownloaded, this,
-        [this, safePreview, fileId](const QString &id, const QByteArray &data, const QString &mimeType)
+    // Only one prompt is shown at a time, so a single stored connection is
+    // enough. It is disconnected on the next showResponse()/clear() to avoid
+    // accumulating stale lambdas that fire on later downloads.
+    m_attachmentConn = connect(drive, &DriveApi::attachmentDownloaded, this,
+        [this, fileId](const QString &id, const QByteArray &data, const QString &mimeType)
         {
             bool match = (id == fileId);
             Logger::instance().info(
@@ -161,46 +170,87 @@ void ResponsePane::appendFileAttachment(const QString &fileId, DriveApi *drive)
                     .arg(data.size())
                     .arg(mimeType));
 
-            if (match && safePreview)
+            if (match)
             {
                 Logger::instance().info(
-                    QString("[Attachment] setting content on preview for fileId='%1'").arg(fileId));
-                safePreview->setContent(data, mimeType);
+                    QString("[Attachment] inserting attachment inline for fileId='%1'").arg(fileId));
+                insertAttachmentInline(data, mimeType, fileId);
             }
         });
 
     drive->downloadAttachment(fileId);
 }
 
-void ResponsePane::appendInlineImage(const QString &base64data, const QString &mimeType)
+void ResponsePane::insertAttachmentInline(const QByteArray &data, const QString &mimeType,
+                                          const QString &fileId)
 {
-    QByteArray raw = QByteArray::fromBase64(base64data.toUtf8());
-    QPixmap pix;
-    if (pix.loadFromData(raw))
+    if (mimeType.startsWith("image/"))
     {
-        auto *preview = new FilePreviewWidget("[inline image]", this);
-        preview->setContent(raw, mimeType);
-        m_layout->addWidget(preview);
-        m_filePreviews.append(preview);
+        QPixmap pix;
+        if (pix.loadFromData(data))
+        {
+            QString url = QString("attachment://%1").arg(fileId);
+            m_browser->document()->addResource(QTextDocument::ImageResource, QUrl(url),
+                                               fitImageWidth(pix));
+            m_browser->append("<div style='text-align:center; margin:6px 0;'>"
+                              "<img src='" + url + "'/></div>");
+        }
+        else
+        {
+            Logger::instance().warn(
+                QString("[Attachment] image decode FAILED for fileId='%1' mime='%2' size=%3")
+                    .arg(fileId, mimeType).arg(data.size()));
+            m_browser->append("<p><i>Attached image could not be decoded.</i></p>");
+        }
+    }
+    else if (mimeType.startsWith("text/") || mimeType.contains("json")
+             || mimeType.contains("javascript"))
+    {
+        m_browser->append("<h4>Attached file:</h4><pre>" + QString::fromUtf8(data).toHtmlEscaped()
+                          + "</pre>");
     }
     else
     {
+        Logger::instance().info(
+            QString("[Attachment] attachment not previewable inline: fileId='%1' mime='%2'")
+                .arg(fileId, mimeType));
+        m_browser->append(
+            QString("<p><i>Attachment downloaded (mime: %1, %2 bytes) but cannot be "
+                    "previewed inline.</i></p>").arg(mimeType.toHtmlEscaped()).arg(data.size()));
+    }
+}
+
+void ResponsePane::appendInlineImage(const QString &base64data, const QString &mimeType)
+{
+    // Robust base64: strip any data URI header (e.g. data:image/png;base64,<data>).
+    QString base64 = base64data;
+    if (base64.contains(","))
+        base64 = base64.section(',', 1);
+    base64 = base64.trimmed();
+
+    QByteArray raw = QByteArray::fromBase64(base64.toUtf8());
+    QPixmap pix;
+    if (pix.loadFromData(raw))
+    {
+        QString url = QStringLiteral("inlineimage://1");
+        m_browser->document()->addResource(QTextDocument::ImageResource, QUrl(url),
+                                           fitImageWidth(pix));
+        m_browser->append("<div style='text-align:center; margin:6px 0;'><img src='" + url
+                          + "'/></div>");
+    }
+    else
+    {
+        Logger::instance().warn(
+            QString("[Attachment] inline image decode FAILED mime='%1' len=%2")
+                .arg(mimeType).arg(raw.size()));
         m_browser->append("<p><i>[Inline image could not be decoded]</i></p>");
     }
 }
 
-void ResponsePane::removeFilePreviews()
-{
-    for (auto *w : m_filePreviews)
-    {
-        m_layout->removeWidget(w);
-        w->deleteLater();
-    }
-    m_filePreviews.clear();
-}
-
 void ResponsePane::clear()
 {
-    removeFilePreviews();
+    if (m_attachmentConn)
+        disconnect(m_attachmentConn);
+    m_attachmentConn = QMetaObject::Connection();
     m_browser->clear();
 }

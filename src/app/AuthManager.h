@@ -5,6 +5,10 @@
 #include <QJsonObject>
 #include <QNetworkAccessManager>
 #include <QDateTime>
+#include <QHash>
+
+class QTcpServer;
+class QTcpSocket;
 
 class AuthManager : public QObject
 {
@@ -23,6 +27,8 @@ public:
     void signOut();
     void submitAuthCode(const QString &code);
 
+    QString redirectUri() const { return m_redirectUri; }
+
 signals:
     void authSuccess(const QString &message);
     void authFailed(const QString &error);
@@ -30,12 +36,18 @@ signals:
     void authCodeRequired(const QString &authUrl);
 
 private:
+    bool startCallbackServer();
+    void onCallbackConnection();
+    void handleCallbackRequest(QTcpSocket *socket, const QByteArray &requestHead);
+    void sendHtmlResponse(QTcpSocket *socket);
     void exchangeCodeForTokens(const QString &code);
     void storeTokens(const QString &access, const QString &refresh, int expiresIn);
     void loadSavedTokens();
     QString buildAuthUrl() const;
 
     QNetworkAccessManager *m_net;
+    QTcpServer *m_callbackServer = nullptr;
+    QHash<QTcpSocket *, QByteArray> m_callbackBuffers;
 
     QString m_clientId;
     QString m_clientSecret;

@@ -11,6 +11,7 @@
 #include <QWidget>
 #include <QHBoxLayout>
 #include "models/Conversation.h"
+#include "api/LocalCache.h"
 
 struct DriveFile;
 class AuthManager;
@@ -21,7 +22,6 @@ class ConversationListPane;
 class PromptListPane;
 class ResponsePane;
 class SearchDialog;
-class LocalCache;
 
 class MainWindow : public QMainWindow
 {
@@ -55,12 +55,13 @@ private:
     void switchToGoogleBackend();
     void switchToCopilotBackend();
     void addCopilotMessage(const QString &role, const QString &text);
+    int indexForFileId() const;
 
     AuthManager *m_auth;
     DriveApi *m_drive;
     CopilotApi *m_copilot;
     ConversationModel *m_convModel;
-    LocalCache *m_cache;
+    LocalCache m_cache;
 
     ConversationListPane *m_convPane;
     PromptListPane *m_promptPane;
@@ -83,7 +84,7 @@ private:
 
     QString m_currentFolderId;
     QList<DriveFile> m_conversationFiles;
-    int m_selectedConvIndex = -1;
+    QString m_selectedFileId;
 
     // Local (Copilot) conversation state
     QList<Conversation> m_localConversations;

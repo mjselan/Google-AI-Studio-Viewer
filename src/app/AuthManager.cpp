@@ -9,6 +9,9 @@
 #include <QApplication>
 #include <QFile>
 #include <QDebug>
+#include <QTcpServer>
+#include <QTcpSocket>
+#include <QHostAddress>
 
 AuthManager::AuthManager(QObject *parent)
     : QObject(parent)
@@ -45,10 +48,9 @@ void AuthManager::loadConfig(const QString &configPath)
     m_clientId = obj["client_id"].toString();
     m_clientSecret = obj["client_secret"].toString();
 
-    // For the Google download format, force OOB redirect (our auth flow)
-    m_redirectUri = obj["redirect_uri"].toString();
-    if (m_redirectUri.isEmpty())
-        m_redirectUri = "urn:ietf:wg:oauth:2.0:oob";
+    // Redirect URI is set to a local loopback URI at authenticate() time so
+    // the auth code is captured automatically (Google has deprecated OOB flow).
+    m_redirectUri.clear();
 
     m_scopes << "https://www.googleapis.com/auth/drive.readonly";
 
@@ -59,7 +61,7 @@ void AuthManager::setCredentials(const QString &clientId, const QString &clientS
 {
     m_clientId = clientId;
     m_clientSecret = clientSecret;
-    m_redirectUri = "urn:ietf:wg:oauth:2.0:oob";
+    m_redirectUri.clear();
     m_scopes << "https://www.googleapis.com/auth/drive.readonly";
 
     loadSavedTokens();
@@ -123,9 +125,104 @@ void AuthManager::authenticate()
         return;
     }
 
+    // Start the local loopback callback server before opening the browser so
+    // Google can redirect the auth code back to us automatically.
+    if (!startCallbackServer())
+        return;
+
     QString url = buildAuthUrl();
     QDesktopServices::openUrl(QUrl(url));
     emit authCodeRequired(url);
+}
+
+bool AuthManager::startCallbackServer()
+{
+    if (m_callbackServer && m_callbackServer->isListening())
+        return true;
+
+    if (!m_callbackServer)
+        m_callbackServer = new QTcpServer(this);
+
+    if (!m_callbackServer->listen(QHostAddress::LocalHost, 0))
+    {
+        emit authFailed("Could not start local OAuth callback server: "
+                        + m_callbackServer->errorString());
+        return false;
+    }
+
+    m_redirectUri = QString("http://127.0.0.1:%1/callback").arg(m_callbackServer->serverPort());
+    connect(m_callbackServer, &QTcpServer::newConnection,
+            this, &AuthManager::onCallbackConnection);
+    return true;
+}
+
+void AuthManager::onCallbackConnection()
+{
+    while (m_callbackServer->hasPendingConnections())
+    {
+        QTcpSocket *socket = m_callbackServer->nextPendingConnection();
+        socket->setParent(m_callbackServer);
+        // Guaranteed cleanup: if the client disconnects before the HTTP header
+        // is complete, drop its buffered data and delete the socket.
+        connect(socket, &QTcpSocket::disconnected, this, [this, socket]()
+        {
+            m_callbackBuffers.remove(socket);
+            socket->deleteLater();
+        });
+
+        connect(socket, &QTcpSocket::readyRead, this, [this, socket]()
+        {
+            m_callbackBuffers[socket].append(socket->readAll());
+            QByteArray &buf = m_callbackBuffers[socket];
+
+            int headerEnd = buf.indexOf("\r\n\r\n");
+            if (headerEnd < 0)
+                headerEnd = buf.indexOf("\n\n");
+            if (headerEnd < 0)
+                return;  // request header not complete yet
+
+            QByteArray head = buf.left(headerEnd);
+            m_callbackBuffers.remove(socket);
+
+            handleCallbackRequest(socket, head);
+            socket->disconnectFromHost();
+        });
+    }
+}
+
+void AuthManager::handleCallbackRequest(QTcpSocket *socket, const QByteArray &requestHead)
+{
+    QString firstLine = QString::fromLatin1(requestHead).split('\n').first();
+    QString target = firstLine.section(' ', 1, 1);
+
+    QUrlQuery query(QUrl(QStringLiteral("http://localhost") + target).query());
+    QString error = query.queryItemValue("error");
+    QString code = query.queryItemValue("code");
+
+    if (!error.isEmpty())
+        emit authFailed("OAuth error from provider: " + error);
+    else if (!code.isEmpty())
+        submitAuthCode(code);
+    else
+        emit authFailed("OAuth callback received no authorization code.");
+
+    sendHtmlResponse(socket);
+}
+
+void AuthManager::sendHtmlResponse(QTcpSocket *socket)
+{
+    const QByteArray body =
+        "<html><body><h3>Authorization complete</h3>"
+        "<p>You can close this window and return to the application.</p>"
+        "</body></html>";
+    QByteArray response =
+        "HTTP/1.1 200 OK\r\n"
+        "Content-Type: text/html; charset=utf-8\r\n"
+        "Content-Length: " + QByteArray::number(body.size()) + "\r\n"
+        "Connection: close\r\n\r\n" + body;
+    socket->write(response);
+    socket->flush();
+    socket->disconnectFromHost();
 }
 
 void AuthManager::submitAuthCode(const QString &code)

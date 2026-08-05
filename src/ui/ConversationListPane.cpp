@@ -164,24 +164,28 @@ void ConversationListPane::refreshList()
 
 void ConversationListPane::applySort()
 {
+    // Chronological comparator helpers — use epoch milliseconds so sorting is
+    // robust when timestamps carry different timezone offsets.
+    auto sortTimeMs = [](const Conversation &c) -> qint64
+    {
+        QDateTime t = c.messages.isEmpty() ? c.lastModified : c.messages.last().createTime;
+        return t.isValid() ? t.toMSecsSinceEpoch() : 0;
+    };
+
     switch (m_sortMode)
     {
     case NewestFirst:
         std::sort(m_conversations.begin(), m_conversations.end(),
-            [](const Conversation &a, const Conversation &b)
+            [sortTimeMs](const Conversation &a, const Conversation &b)
             {
-                auto ta = a.messages.isEmpty() ? a.lastModified : a.messages.last().createTime;
-                auto tb = b.messages.isEmpty() ? b.lastModified : b.messages.last().createTime;
-                return ta > tb;
+                return sortTimeMs(a) > sortTimeMs(b);
             });
         break;
     case OldestFirst:
         std::sort(m_conversations.begin(), m_conversations.end(),
-            [](const Conversation &a, const Conversation &b)
+            [sortTimeMs](const Conversation &a, const Conversation &b)
             {
-                auto ta = a.messages.isEmpty() ? a.lastModified : a.messages.last().createTime;
-                auto tb = b.messages.isEmpty() ? b.lastModified : b.messages.last().createTime;
-                return ta < tb;
+                return sortTimeMs(a) < sortTimeMs(b);
             });
         break;
     case AlphaAZ:
