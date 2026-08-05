@@ -58,4 +58,5 @@ private:
     QString m_token;
     QString m_folderId;
     QList<PendingRequest> m_pendingRequests;
+    bool m_refreshInProgress = false;
 };

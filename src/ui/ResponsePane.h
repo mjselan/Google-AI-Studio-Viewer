@@ -25,7 +25,7 @@ private:
     void requestAttachment(const QString &fileId, DriveApi *drive);
     void insertAttachmentInline(const QByteArray &data, const QString &mimeType,
                                 const QString &fileId);
-    void appendInlineImage(const QString &base64data, const QString &mimeType);
+    void appendInlineImage(const QString &base64data, const QString &mimeType, int index = 0);
 
     QTextBrowser *m_browser;
     QVBoxLayout *m_layout;

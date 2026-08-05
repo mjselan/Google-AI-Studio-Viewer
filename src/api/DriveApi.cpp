@@ -69,7 +69,12 @@ void DriveApi::handleReply(QNetworkReply *reply, std::function<void(const QJsonO
                     pending.url = reply->url().toString();
                     pending.callback = callback;
                     m_pendingRequests.append(pending);
-                    emit tokenNeedsRefresh();
+                    // 🔥 FIX: Guard against multiple simultaneous refresh requests
+                    if (!m_refreshInProgress)
+                    {
+                        m_refreshInProgress = true;
+                        emit tokenNeedsRefresh();
+                    }
                     return;
                 }
 
@@ -88,6 +93,7 @@ void DriveApi::handleReply(QNetworkReply *reply, std::function<void(const QJsonO
 
 void DriveApi::retryPendingRequests()
 {
+    m_refreshInProgress = false; // 🔥 Reset guard when tokens are refreshed
     QList<PendingRequest> retries = m_pendingRequests;
     m_pendingRequests.clear();
     for (const auto &pending : retries)
