@@ -4,19 +4,31 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QDateTime>
+#include <QList>
+
+struct InlineAttachment
+{
+    QString mimeType;
+    QString data;
+};
 
 struct Message
 {
     QString text;
-    QString role;               // "user" or "model"
+    QString role;
     int tokenCount = 0;
     QDateTime createTime;
     bool isThought = false;
     QString finishReason;
-    QString driveDocumentId;     // non-empty if this chunk is a file upload
-    QString inlineImageData;     // base64-encoded inline image data
-    QString inlineImageMime;     // mime type of inline image
-    QJsonArray parts;           // raw parts array for thought signatures etc.
+    QString driveDocumentId;
+
+    // Supports multiple inline images per message
+    QList<InlineAttachment> inlineImages;
+
+    // Legacy single-attachment fields retained for compatibility
+    QString inlineImageData;
+    QString inlineImageMime;
+    QJsonArray parts;
 
     static Message fromJson(const QJsonObject &obj);
 };

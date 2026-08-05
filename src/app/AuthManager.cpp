@@ -2,13 +2,12 @@
 #include "Application.h"
 #include <QDesktopServices>
 #include <QJsonDocument>
-#include <QJsonArray>
+#include <QJsonObject>
 #include <QUrlQuery>
 #include <QNetworkReply>
 #include <QSettings>
 #include <QApplication>
 #include <QFile>
-#include <QDebug>
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QHostAddress>
@@ -39,20 +38,16 @@ void AuthManager::loadConfig(const QString &configPath)
     auto doc = QJsonDocument::fromJson(f.readAll());
     f.close();
 
-    // Support both root-level keys and the "installed" wrapper from Google Cloud download
     QJsonObject obj = doc.object();
-    bool isGoogleFormat = obj.contains("installed");
-    if (isGoogleFormat)
+    if (obj.contains("installed"))
         obj = obj["installed"].toObject();
 
     m_clientId = obj["client_id"].toString();
     m_clientSecret = obj["client_secret"].toString();
-
-    // Redirect URI is set to a local loopback URI at authenticate() time so
-    // the auth code is captured automatically (Google has deprecated OOB flow).
     m_redirectUri.clear();
 
-    m_scopes << "https://www.googleapis.com/auth/drive.readonly";
+    // Set explicitly to prevent duplicate accumulative appends
+    m_scopes = { QStringLiteral("https://www.googleapis.com/auth/drive.readonly") };
 
     loadSavedTokens();
 }
@@ -62,7 +57,7 @@ void AuthManager::setCredentials(const QString &clientId, const QString &clientS
     m_clientId = clientId;
     m_clientSecret = clientSecret;
     m_redirectUri.clear();
-    m_scopes << "https://www.googleapis.com/auth/drive.readonly";
+    m_scopes = { QStringLiteral("https://www.googleapis.com/auth/drive.readonly") };
 
     loadSavedTokens();
 }
@@ -101,7 +96,6 @@ void AuthManager::authenticate()
         return;
     }
 
-    // If we already have a valid access token, nothing to do
     if (!m_accessToken.isEmpty())
     {
         int remainingSec = m_expiresIn;
@@ -110,23 +104,16 @@ void AuthManager::authenticate()
             qint64 elapsedSec = m_tokenAcquiredAt.secsTo(QDateTime::currentDateTimeUtc());
             remainingSec = m_expiresIn - static_cast<int>(elapsedSec);
         }
-        int hours = remainingSec / 3600;
-        int mins = (remainingSec % 3600) / 60;
-        emit authSuccess(
-            QString("Authenticated. Token expires in %1h %2m.").arg(hours).arg(mins));
+        emit authSuccess(formatExpiryMessage("Authenticated.", remainingSec));
         return;
     }
 
-    // If we already have a refresh token stored from a previous authorization,
-    // exchange it for a new access token rather than starting from scratch.
     if (!m_refreshToken.isEmpty())
     {
         refreshAccessToken();
         return;
     }
 
-    // Start the local loopback callback server before opening the browser so
-    // Google can redirect the auth code back to us automatically.
     if (!startCallbackServer())
         return;
 
@@ -137,11 +124,15 @@ void AuthManager::authenticate()
 
 bool AuthManager::startCallbackServer()
 {
-    if (m_callbackServer && m_callbackServer->isListening())
-        return true;
-
     if (!m_callbackServer)
+    {
         m_callbackServer = new QTcpServer(this);
+        connect(m_callbackServer, &QTcpServer::newConnection,
+                this, &AuthManager::onCallbackConnection);
+    }
+
+    if (m_callbackServer->isListening())
+        return true;
 
     if (!m_callbackServer->listen(QHostAddress::LocalHost, 0))
     {
@@ -151,9 +142,16 @@ bool AuthManager::startCallbackServer()
     }
 
     m_redirectUri = QString("http://127.0.0.1:%1/callback").arg(m_callbackServer->serverPort());
-    connect(m_callbackServer, &QTcpServer::newConnection,
-            this, &AuthManager::onCallbackConnection);
     return true;
+}
+
+void AuthManager::stopCallbackServer()
+{
+    if (m_callbackServer && m_callbackServer->isListening())
+    {
+        m_callbackServer->close();
+    }
+    m_callbackBuffers.clear();
 }
 
 void AuthManager::onCallbackConnection()
@@ -162,31 +160,29 @@ void AuthManager::onCallbackConnection()
     {
         QTcpSocket *socket = m_callbackServer->nextPendingConnection();
         socket->setParent(m_callbackServer);
-        // Guaranteed cleanup: if the client disconnects before the HTTP header
-        // is complete, drop its buffered data and delete the socket.
+
         connect(socket, &QTcpSocket::disconnected, this, [this, socket]()
-        {
-            m_callbackBuffers.remove(socket);
-            socket->deleteLater();
-        });
+                {
+                    m_callbackBuffers.remove(socket);
+                    socket->deleteLater();
+                });
 
         connect(socket, &QTcpSocket::readyRead, this, [this, socket]()
-        {
-            m_callbackBuffers[socket].append(socket->readAll());
-            QByteArray &buf = m_callbackBuffers[socket];
+                {
+                    m_callbackBuffers[socket].append(socket->readAll());
+                    QByteArray &buf = m_callbackBuffers[socket];
 
-            int headerEnd = buf.indexOf("\r\n\r\n");
-            if (headerEnd < 0)
-                headerEnd = buf.indexOf("\n\n");
-            if (headerEnd < 0)
-                return;  // request header not complete yet
+                    int headerEnd = buf.indexOf("\r\n\r\n");
+                    if (headerEnd < 0)
+                        headerEnd = buf.indexOf("\n\n");
+                    if (headerEnd < 0)
+                        return;
 
-            QByteArray head = buf.left(headerEnd);
-            m_callbackBuffers.remove(socket);
+                    QByteArray head = buf.left(headerEnd);
+                    m_callbackBuffers.remove(socket);
 
-            handleCallbackRequest(socket, head);
-            socket->disconnectFromHost();
-        });
+                    handleCallbackRequest(socket, head);
+                });
     }
 }
 
@@ -219,7 +215,7 @@ void AuthManager::sendHtmlResponse(QTcpSocket *socket)
         "HTTP/1.1 200 OK\r\n"
         "Content-Type: text/html; charset=utf-8\r\n"
         "Content-Length: " + QByteArray::number(body.size()) + "\r\n"
-        "Connection: close\r\n\r\n" + body;
+                                            "Connection: close\r\n\r\n" + body;
     socket->write(response);
     socket->flush();
     socket->disconnectFromHost();
@@ -256,8 +252,6 @@ void AuthManager::refreshAccessToken()
                 auto responseBody = reply->readAll();
                 if (reply->error() != QNetworkReply::NoError)
                 {
-                    // If the refresh token is invalid or expired, clear it so the
-                    // user can start from scratch next time.
                     signOut();
                     QString errMsg = "Token refresh failed: " + reply->errorString();
                     auto doc = QJsonDocument::fromJson(responseBody);
@@ -271,16 +265,14 @@ void AuthManager::refreshAccessToken()
                 QString access = obj["access_token"].toString();
                 int expiresIn = obj["expires_in"].toInt();
                 storeTokens(access, QString(), expiresIn);
-                int hours = expiresIn / 3600;
-                int mins = (expiresIn % 3600) / 60;
                 emit tokenRefreshed();
-                emit authSuccess(
-                    QString("Token refreshed. Expires in %1h %2m.").arg(hours).arg(mins));
+                emit authSuccess(formatExpiryMessage("Token refreshed.", expiresIn));
             });
 }
 
 void AuthManager::signOut()
 {
+    stopCallbackServer();
     m_accessToken.clear();
     m_refreshToken.clear();
     m_expiresIn = 0;
@@ -313,29 +305,29 @@ void AuthManager::exchangeCodeForTokens(const QString &code)
 
     auto *reply = m_net->post(req, body.toString(QUrl::FullyEncoded).toUtf8());
     connect(reply, &QNetworkReply::finished, this, [this, reply]()
-    {
-        reply->deleteLater();
-        auto responseBody = reply->readAll();
-        if (reply->error() != QNetworkReply::NoError)
-        {
-            QString errMsg = "Token exchange failed: " + reply->errorString();
-            auto doc = QJsonDocument::fromJson(responseBody);
-            if (!doc.isNull() && doc.object().contains("error"))
-                errMsg += "\n" + doc.object()["error_description"].toString();
-            emit authFailed(errMsg);
-            return;
-        }
-        auto doc = QJsonDocument::fromJson(responseBody);
-        auto obj = doc.object();
-        QString access = obj["access_token"].toString();
-        QString refresh = obj["refresh_token"].toString();
-        int expiresIn = obj["expires_in"].toInt();
-        storeTokens(access, refresh, expiresIn);
-        int hours = expiresIn / 3600;
-        int mins = (expiresIn % 3600) / 60;
-        emit authSuccess(
-            QString("Authenticated. Token expires in %1h %2m.").arg(hours).arg(mins));
-    });
+            {
+                reply->deleteLater();
+                auto responseBody = reply->readAll();
+                if (reply->error() != QNetworkReply::NoError)
+                {
+                    QString errMsg = "Token exchange failed: " + reply->errorString();
+                    auto doc = QJsonDocument::fromJson(responseBody);
+                    if (!doc.isNull() && doc.object().contains("error"))
+                        errMsg += "\n" + doc.object()["error_description"].toString();
+                    emit authFailed(errMsg);
+                    return;
+                }
+
+                stopCallbackServer();
+
+                auto doc = QJsonDocument::fromJson(responseBody);
+                auto obj = doc.object();
+                QString access = obj["access_token"].toString();
+                QString refresh = obj["refresh_token"].toString();
+                int expiresIn = obj["expires_in"].toInt();
+                storeTokens(access, refresh, expiresIn);
+                emit authSuccess(formatExpiryMessage("Authenticated.", expiresIn));
+            });
 }
 
 void AuthManager::storeTokens(const QString &access, const QString &refresh, int expiresIn)
@@ -347,7 +339,6 @@ void AuthManager::storeTokens(const QString &access, const QString &refresh, int
     if (!refresh.isEmpty())
         m_refreshToken = refresh;
 
-    // Always persist tokens
     auto *app = qobject_cast<Application *>(qApp);
     if (app)
     {
@@ -367,11 +358,18 @@ QString AuthManager::buildAuthUrl() const
     query.addQueryItem("client_id", m_clientId);
     query.addQueryItem("redirect_uri", m_redirectUri);
     query.addQueryItem("response_type", "code");
-    query.addQueryItem("scope", m_scopes.join(" "));
+    query.addQueryItem("scope", m_scopes.join(' '));
     query.addQueryItem("access_type", "offline");
     query.addQueryItem("prompt", "consent");
 
     QUrl url("https://accounts.google.com/o/oauth2/v2/auth");
     url.setQuery(query);
     return url.toString();
+}
+
+QString AuthManager::formatExpiryMessage(const QString &prefix, int expiresInSec) const
+{
+    int hours = expiresInSec / 3600;
+    int mins = (expiresInSec % 3600) / 60;
+    return QString("%1 Token expires in %2h %3m.").arg(prefix).arg(hours).arg(mins);
 }

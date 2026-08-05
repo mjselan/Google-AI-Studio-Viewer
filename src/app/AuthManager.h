@@ -58,4 +58,6 @@ private:
     QString m_refreshToken;
     int m_expiresIn = 0;
     QDateTime m_tokenAcquiredAt;
+    QString formatExpiryMessage(const QString &prefix, int expiresInSec) const;
+    void stopCallbackServer();
 };

@@ -1,97 +1,581 @@
-1. 🚨 Critical Bugs & Memory Leaks
-A. Multiple Lambda Connections Leak in ResponsePane / DriveApi
-Location: ResponsePane::appendFileAttachment (src/ui/ResponsePane.cpp)
-connect(drive, &DriveApi::attachmentDownloaded, this,
-    [this, safePreview, fileId](const QString &id, const QByteArray &data, const QString &mimeType)
-    { ... });
-Issue: Every time a user selects a prompt pair containing an attachment, showResponse() calls appendFileAttachment(), creating a new signal-slot connection to drive->attachmentDownloaded. Because DriveApi is owned by MainWindow (persists for the app's lifetime), old lambda slots are never disconnected. Selecting prompts 50 times will result in 50 redundant lambda invocations for every single file download.
-Fix: Store a connection handle or pass a context object and disconnect when clearing, or manage downloads through dedicated request tokens:
-// Store connection and disconnect prior to creating a new one, or use QMetaObject::Connection
-QMetaObject::Connection conn = connect(drive, &DriveApi::attachmentDownloaded, safePreview,
-    [safePreview, fileId](const QString &id, const QByteArray &data, const QString &mimeType)
-    {
-        if (id == fileId && safePreview)
-            safePreview->setContent(data, mimeType);
-    });
-B. Raw Pointer Leak in MainWindow (LocalCache)
-Location: MainWindow.h / MainWindow.cpp
-// MainWindow.h
-LocalCache *m_cache;
+Highest-priority issues
+1. AuthManager::m_scopes can accumulate duplicates
+In both:
 
-// MainWindow.cpp constructor
-m_cache(new LocalCache())
-Issue: LocalCache does not inherit from QObject and is allocated with new, but is never deleted in MainWindow::~MainWindow(), causing a memory leak on application shutdown.
-Fix: Either make m_cache a value member (LocalCache m_cache;) or manage it with std::unique_ptr<LocalCache>:
-// MainWindow.h
-std::unique_ptr<LocalCache> m_cache;
-C. Invalid Selected Index After Sorting
-Location: MainWindow.cpp (m_selectedConvIndex)
-Issue: m_selectedConvIndex stores an integer row index. When the user changes the sort order via m_sortCombo, ConversationListPane::applySort() rearranges m_conversations. The integer m_selectedConvIndex in MainWindow now points to a completely different conversation.
-Fix: Track conversations by fileId (QString m_selectedFileId) instead of an integer row index.
-D. Drive Retry Logic Breaks Binary Attachment Downloads
-Location: DriveApi.cpp (retryPendingRequests & downloadAttachment)
-void DriveApi::retryPendingRequests()
-{
-    for (const auto &pending : retries)
-        sendGet(pending.url, pending.callback); // Parses response as JSON!
+loadConfig()
+setCredentials()
+you do:
+
+cpp
+
+
+m_scopes << "[googleapis.com](https://www.googleapis.com/auth/drive.readonly)";
+If either function is called more than once, the same scope gets appended repeatedly.
+
+Why it matters
+It usually won’t break auth, but it creates messy auth URLs and is an avoidable state bug.
+
+Better
+Set the list explicitly:
+
+cpp
+
+
+m_scopes = { "[googleapis.com](https://www.googleapis.com/auth/drive.readonly)" };
+2. AuthManager::startCallbackServer() may connect newConnection multiple times
+You do:
+
+cpp
+
+
+connect(m_callbackServer, &QTcpServer::newConnection,
+        this, &AuthManager::onCallbackConnection);
+inside startCallbackServer().
+
+If the server is stopped and started again on the same instance, this can create duplicate connections unless guarded.
+
+Better
+Either connect once when the server is created:
+
+cpp
+
+
+if (!m_callbackServer) {
+    m_callbackServer = new QTcpServer(this);
+    connect(m_callbackServer, &QTcpServer::newConnection,
+            this, &AuthManager::onCallbackConnection);
 }
-Issue: sendGet assumes the response is a JSON document (QJsonDocument::fromJson). If an OAuth token expires while downloading a binary image/file (downloadAttachment), retryPendingRequests() calls sendGet(), which tries to parse PNG/PDF data as JSON and passes an empty QJsonObject to the callback, causing download failures.
-Fix: Differentiate between JSON endpoints and binary media endpoints in PendingRequest.
+or use Qt::UniqueConnection.
 
-2. 🔐 OAuth 2.0 & API Compliance
-Out-Of-Band (OOB) Flow Deprecation
-Location: AuthManager.cpp (urn:ietf:wg:oauth:2.0:oob)
-m_redirectUri = "urn:ietf:wg:oauth:2.0:oob";
-Issue: Google officially deprecated and disabled Out-Of-Band (OOB) flow (urn:ietf:wg:oauth:2.0:oob) for desktop applications to mitigate phishing risks. Newly created Google OAuth client IDs will reject this authorization flow with an invalid_request error.
-Fix: Implement a local HTTP loopback server (e.g., listening on http://127.0.0.1:<random_port>/callback) using QTcpServer or QHttpServer to catch the OAuth authorization code automatically without manual copy-pasting.
-Drive API Query Parameter Escaping
-Location: DriveApi.cpp (findFolder and searchConversations)
-query.addQueryItem("q", QString("name='%1' and ...").arg(folderName));
-Issue: If folderName or a search query contains a single quote ' (e.g., User's Folder), the query string fails with HTTP 400 Bad Request.
-Fix: Escape single quotes in Drive query strings (folderName.replace("'", "\\'")).
+3. Callback server is never shut down after successful auth
+After token exchange succeeds, the local callback server keeps listening.
 
-3. 🎨 UI / UX & Rendering Improvements
-A. Embedding Attachments Inline in QTextBrowser
-Location: ResponsePane.cpp
-Current Behavior: Prompt text is displayed in QTextBrowser, but file attachments and inline images are appended as separate widgets to m_layout at the bottom of ResponsePane. If a prompt contains text followed by an image, the image is rendered below all text rather than in sequence.
-Improvement: Load images directly into QTextDocument as resources:
-// Clean inline embedding in QTextBrowser:
-m_browser->document()->addResource(QTextDocument::ImageResource, QUrl("myimage://1"), pixmap);
-m_browser->append("<img src='myimage://1'/>");
-B. Robust Base64 Inline Image Handling
-Location: ResponsePane.cpp (appendInlineImage)
-Issue: Google AI Studio inline image data sometimes contains data URI prefixes (e.g., data:image/png;base64,iVBORw...). Passing this directly to QByteArray::fromBase64 will fail decoding.
-Fix: Strip data URI headers prior to Base64 decoding:
-QString base64 = base64data;
-if (base64.contains(","))
-    base64 = base64.section(',', 1);
-QByteArray raw = QByteArray::fromBase64(base64.toUtf8());
+Why it matters
+unnecessary open local port
+repeated auth attempts may reuse stale server state
+callback buffers may retain junk longer than needed
+Suggestion
+After a successful exchangeCodeForTokens():
 
-4. ⚡ Database & Performance Optimizations
-Named SQLite Connection
-Location: LocalCache.cpp (LocalCache::init)
-m_db = QSqlDatabase::addDatabase("QSQLITE");
-Issue: Using addDatabase("QSQLITE") configures the default database connection. If LocalCache is re-created or accessed, Qt emits warnings (a connection named 'qt_sql_default_connection' already exists).
-Fix: Specify a unique connection name:
-m_db = QSqlDatabase::addDatabase("QSQLITE", "ViewerCacheConnection");
-Timezone Robustness in Message Sorting
-Location: ConversationModel.cpp
-std::sort(conv.messages.begin(), conv.messages.end(),
-    [](const Message &a, const Message &b)
+cpp
+
+
+if (m_callbackServer && m_callbackServer->isListening()) {
+    m_callbackServer->close();
+}
+m_callbackBuffers.clear();
+Also consider doing similar cleanup in signOut() or on auth failure.
+
+4. DriveApi::handleReply() drops non-401 errors silently
+Current behavior:
+
+cpp
+
+
+if (reply->error() != QNetworkReply::NoError)
+{
+    qWarning() << "Drive API error:" << reply->errorString();
+    return;
+}
+Problem
+The UI never gets told about many failures. That makes debugging and user feedback harder.
+
+Better
+Emit apiError(...) with richer context:
+
+cpp
+
+
+if (reply->error() != QNetworkReply::NoError)
+{
+    emit apiError(QString("Drive request failed (%1): %2")
+                  .arg(status)
+                  .arg(reply->errorString()));
+    return;
+}
+Also useful: include response body when available.
+
+5. Search query escaping is incomplete / risky
+You added:
+
+cpp
+
+
+static QString escapeQueryValue(const QString &value)
+{
+    QString escaped = value;
+    escaped.replace('\'', "\\'");
+    return escaped;
+}
+This is good, but Google Drive query syntax can still be sensitive to malformed text. Backslashes and some odd combinations may still behave badly.
+
+Better
+At minimum also escape backslashes:
+
+cpp
+
+
+escaped.replace("\\", "\\\\");
+escaped.replace("'", "\\'");
+And consider centralizing all query construction in one helper.
+
+6. ResponsePane only supports one attachment download listener at a time
+This is intentional based on the comment:
+
+Only one prompt is shown at a time
+
+That’s mostly fine, but there is still a subtle edge case:
+
+user selects prompt A -> attachment request starts
+quickly selects prompt B -> old connection is disconnected
+attachment A download completes later -> ignored
+that’s okay visually, but wasted work still happens
+Not a bug by itself, but if prompts can have multiple attachments in the future, this design won’t scale.
+
+Better long-term shape
+Move attachment preview state into a small request-tracking map, for example:
+
+cpp
+
+
+QHash<QString, QString> m_pendingAttachmentIds;
+or use a dedicated attachment widget per file.
+
+Right now it’s acceptable, but the current implementation is optimized for the current data model, not extensibility.
+
+Correctness and robustness improvements
+7. ConversationModel::buildPairs() relies on exact QDateTime equality
+You improved sorting using epoch milliseconds, which is good. But pairing still uses:
+
+cpp
+
+
+if (hasPrompt && msg.createTime == currentPrompt.createTime)
+and later:
+
+cpp
+
+
+conv.pairs.last().prompt.createTime != currentPrompt.createTime
+Why it matters
+Two timestamps representing the same instant can compare differently if parsing/localization behaves inconsistently. Since you already standardized sorting to epoch time, pairing should use that too.
+
+Better
+Use helper:
+
+cpp
+
+
+static qint64 timeKey(const QDateTime &dt)
+{
+    return dt.isValid() ? dt.toMSecsSinceEpoch() : 0;
+}
+Then compare timeKey(msg.createTime) == timeKey(currentPrompt.createTime).
+
+8. Attachment loss diagnostics may miss inline-image-only matches
+In parseConversation():
+
+cpp
+
+
+if (p.prompt.driveDocumentId == m.driveDocumentId &&
+    p.prompt.createTime == m.createTime)
+This only checks driveDocumentId and createTime. If the attachment is an inline image with no driveDocumentId, the logic can behave misleadingly.
+
+Better
+Match on either drive doc or inline payload presence:
+
+cpp
+
+
+bool sameAttachment =
+    (!m.driveDocumentId.isEmpty() && p.prompt.driveDocumentId == m.driveDocumentId) ||
+    (!m.inlineImageData.isEmpty() && p.prompt.inlineImageData == m.inlineImageData);
+And again use epoch milliseconds for time matching.
+
+9. Message::fromJson() only keeps one inline image
+In this loop:
+
+cpp
+
+
+if (part.contains("inlineData"))
+{
+    QJsonObject inlineData = part["inlineData"].toObject();
+    m.inlineImageMime = inlineData["mimeType"].toString();
+    m.inlineImageData = inlineData["data"].toString();
+}
+If a message has multiple inline image parts, only the last one is preserved.
+
+Better
+If multiple images are possible, change the model:
+
+cpp
+
+
+struct InlineAttachment {
+    QString mimeType;
+    QString data;
+};
+QList<InlineAttachment> inlineImages;
+If the app only intends to support one image, add a comment stating that assumption.
+
+10. Message::fromJson() ignores non-text structured parts
+You store raw parts, which is good, but m.text = obj["text"].toString(); assumes text is already flattened upstream.
+
+If Google AI Studio exports evolve, text may be carried primarily in parts.
+
+Suggestion
+Fallback-build text from parts when obj["text"] is empty:
+
+cpp
+
+
+if (m.text.isEmpty()) {
+    QStringList pieces;
+    for (const auto &v : m.parts) {
+        auto p = v.toObject();
+        if (p.contains("text"))
+            pieces << p["text"].toString();
+    }
+    m.text = pieces.join("\n");
+}
+That would make parsing more resilient.
+
+11. CopilotApi::sendMessage() assumes choices[0] always exists
+This line can blow up semantically if the server returns malformed JSON:
+
+cpp
+
+
+QString content = root["choices"].toArray()
+    .first().toObject()["message"].toObject()["content"].toString();
+Better
+Validate shape before indexing:
+
+cpp
+
+
+QJsonArray choices = root["choices"].toArray();
+if (choices.isEmpty()) {
+    emit errorOccurred("No choices returned by server.");
+    return;
+}
+Same comment applies to fetchModels() and data.first().
+
+12. Local server chat does not preserve multi-turn history client-side in API payload
+In CopilotApi::sendMessage() you send only the latest user message:
+
+cpp
+
+
+QJsonArray messages;
+QJsonObject msg;
+msg["role"] = "user";
+msg["content"] = prompt;
+messages.append(msg);
+You do pass conversation_id, so this is fine if the backend tracks state server-side.
+
+Suggestion
+Document this assumption clearly. Otherwise future backend changes may silently break continuity.
+
+If you want the client to be portable across backends, consider sending full local history.
+
+Design and maintainability suggestions
+13. MainWindow is doing too much
+MainWindow currently owns:
+
+auth flow orchestration
+Drive loading
+cache decisions
+backend switching
+local chat state
+search behavior
+selection persistence logic
+That’s a lot for one class.
+
+Better architecture
+Introduce one or more coordinator/controller classes:
+
+ConversationService
+load list
+cache lookup
+fetch and parse conversation
+BackendController
+switch between Google and Copilot
+SessionController
+local conversation state for Copilot mode
+This would shrink MainWindow into mostly UI wiring.
+
+14. Extract repeated time-comparison logic into helpers
+You now compare timestamps in multiple places:
+
+ConversationModel
+ConversationListPane
+cache freshness checks
+pair logic
+Better
+A small utility header would help:
+
+cpp
+
+
+namespace TimeUtil {
+    inline qint64 key(const QDateTime &dt) {
+        return dt.isValid() ? dt.toMSecsSinceEpoch() : 0;
+    }
+    inline bool sameInstant(const QDateTime &a, const QDateTime &b) {
+        return key(a) == key(b);
+    }
+}
+This would reduce subtle inconsistency.
+
+15. Attachment extension filters are duplicated
+You have very similar lists in:
+
+listConversations()
+searchConversations()
+They differ slightly too, which may create inconsistent behavior.
+
+Better
+Centralize into helpers:
+
+cpp
+
+
+static bool isLikelyAttachment(const QString &mime, const QString &ext);
+That avoids drift.
+
+16. LocalCache should log DB failures
+Many operations do:
+
+cpp
+
+
+if (!query.exec())
+    return;
+Problem
+Silent failure makes support difficult.
+
+Better
+Log query.lastError().text() and maybe database path at init time.
+
+Example:
+
+cpp
+
+
+if (!query.exec()) {
+    Logger::instance().error("Cache save failed: " + query.lastError().text());
+    return;
+}
+17. Logger.cpp includes unused headers
+Example:
+
+cpp
+
+
+#include <QTextStream>
+#include <QApplication>
+These do not seem used.
+
+Why care
+Not a big deal, but cleaning includes improves compile hygiene.
+
+Same likely applies in a few other files.
+
+UI and UX suggestions
+18. ResponsePane inline attachment rendering is simpler now, but you lost file actions
+The older version had FilePreviewWidget with:
+
+save button
+full-size image view
+zoom controls
+The newer ResponsePane renders attachments directly in QTextBrowser, which is lighter, but it drops those interaction features.
+
+Suggestion
+If inline simplicity is preferred, add at least:
+
+a "Save attachment" action/button
+click-to-open full image dialog
+Right now, image display improved, but user control regressed.
+
+19. FilePreviewWidget::mousePressEvent() opens full image on single click
+That can feel surprising because the tooltip says:
+
+Double-click to view full size
+
+But single click also opens it.
+
+Better
+Either:
+
+remove single-click open, or
+change tooltip text
+20. Search results use only file name as visible text
+In SearchDialog, results show only:
+
+cpp
+
+
+auto *item = new QListWidgetItem(file.fileName);
+Better UX
+Show modified time too, or maybe a two-line item. Search results are much easier to distinguish that way.
+
+21. Conversation titles use file name even when a better prompt title exists
+Conversation::displayTitle() returns fileName first.
+
+If Drive filenames are opaque, users may prefer first user prompt preview.
+
+Suggestion
+Consider a toggle or smarter heuristic:
+
+use first non-empty prompt text if filename looks machine-generated
+otherwise use filename
+Smaller code-quality suggestions
+22. Prefer nullptr consistently over raw default construction comments
+Mostly already done well. Keep an eye on:
+
+temporary widget ownership
+pointer member initialization in headers
+The code is fairly modern already.
+
+23. Use helper functions for repeated status message formatting
+Patterns like:
+
+cpp
+
+
+QString("Authenticated. Token expires in %1h %2m.").arg(hours).arg(mins)
+appear more than once.
+
+A helper like:
+
+cpp
+
+
+QString AuthManager::formatExpiryMessage(const QString &prefix, int expiresIn) const;
+would reduce duplication.
+
+24. Remove dead variables
+In DriveApi::retryPendingRequests():
+
+cpp
+
+
+int count = m_pendingRequests.size();
+count is unused.
+
+In Message::fromJson():
+
+cpp
+
+
+QStringList keys = part.keys();
+keys is unused.
+
+These should go.
+
+25. Consider explicit move/copy intent for model structs
+Conversation, Message, and DriveFile are plain structs and copied around often. Fine for now, but once conversations grow large, copies may become expensive.
+
+Options
+keep as-is if data volume is moderate
+consider implicit sharing or std::shared_ptr/Qt shared data patterns if performance becomes an issue
+at least pass const Conversation & where possible, which you already often do
+26. MainWindow destructor does nothing
+Current:
+
+cpp
+
+
+MainWindow::~MainWindow() {}
+That’s fine, but can be:
+
+cpp
+
+
+MainWindow::~MainWindow() = default;
+if declared accordingly.
+
+Suggested top 10 action list
+If you want the most value for the least effort, I’d do these first:
+
+Priority	Change	Why
+1	Deduplicate m_scopes assignment	Prevent subtle auth state bugs
+2	Close callback server after auth completes	Resource/lifecycle correctness
+3	Prevent duplicate newConnection hookups	Avoid repeated callback handling
+4	Emit UI-visible errors from DriveApi::handleReply()	Better diagnosability
+5	Use epoch-ms comparison everywhere timestamps are compared	Consistency and correctness
+6	Validate JSON shape in CopilotApi before indexing arrays	Prevent brittle parsing
+7	Centralize attachment-file filtering logic	Avoid duplication/drift
+8	Add logging for LocalCache DB failures	Easier debugging
+9	Decide whether multiple inline images are supported, then model it explicitly	Prevent hidden truncation
+10	Split MainWindow responsibilities over time	Maintainability
+Example improvement snippets
+Scope initialization
+cpp
+
+
+void AuthManager::loadConfig(const QString &configPath)
+{
+    ...
+    m_scopes = { "[googleapis.com](https://www.googleapis.com/auth/drive.readonly)" };
+    loadSavedTokens();
+}
+Safer callback server setup
+cpp
+
+
+bool AuthManager::startCallbackServer()
+{
+    if (!m_callbackServer) {
+        m_callbackServer = new QTcpServer(this);
+        connect(m_callbackServer, &QTcpServer::newConnection,
+                this, &AuthManager::onCallbackConnection);
+    }
+    if (m_callbackServer->isListening())
+        return true;
+    if (!m_callbackServer->listen(QHostAddress::LocalHost, 0)) {
+        emit authFailed("Could not start local OAuth callback server: "
+                        + m_callbackServer->errorString());
+        return false;
+    }
+    m_redirectUri = QString("http://127.0.0.1:%1/callback")
+                        .arg(m_callbackServer->serverPort());
+    return true;
+}
+Close callback server after success
+cpp
+
+
+void AuthManager::exchangeCodeForTokens(const QString &code)
+{
+    ...
+    connect(reply, &QNetworkReply::finished, this, [this, reply]()
     {
-        if (a.createTime != b.createTime)
-            return a.createTime < b.createTime;
         ...
+        storeTokens(access, refresh, expiresIn);
+        if (m_callbackServer && m_callbackServer->isListening())
+            m_callbackServer->close();
+        m_callbackBuffers.clear();
+        emit authSuccess(
+            QString("Authenticated. Token expires in %1h %2m.").arg(hours).arg(mins));
     });
-Issue: Direct QDateTime comparison can produce inaccurate results if one datetime instance contains a local offset and another is UTC (Qt::ISODateWithMs).
-Fix: Compare epoch milliseconds:
-return a.createTime.toMSecsSinceEpoch() < b.createTime.toMSecsSinceEpoch();
+}
+Safer CopilotApi::sendMessage()
+cpp
 
-5. 🧹 Code Cleanup & Modern C++ Modernization
-Delete Patch Artifacts: Remove src/app/patch.diff from the active repository source tree.
-Modern Signal/Slot Syntax: Replace deprecated QOverload in MainWindow.cpp:
-// Before:
-connect(m_backendCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), ...);
-// Modern (Qt 5.14 / Qt 6):
-connect(m_backendCombo, &QComboBox::currentIndexChanged, ...);
-Secure Token Storage: Plain-text token storage in QSettings (auth/refresh_token) should ideally be replaced with OS keychain services (such as QKeychain, Windows Credential Manager, or macOS Keychain) for production deployments.
+
+QJsonArray choices = root["choices"].toArray();
+if (choices.isEmpty()) {
+    emit errorOccurred("No choices returned");
+    return;
+}
+QJsonObject firstChoice = choices.first().toObject();
+QJsonObject messageObj = firstChoice["message"].toObject();
+QString content = messageObj["content"].toString();
+if (content.isEmpty() && !messageObj.contains("content")) {
+    emit errorOccurred("Malformed response: missing message content");
+    return;
+}

@@ -1,5 +1,4 @@
 #include "Message.h"
-#include "app/Logger.h"
 #include <QJsonDocument>
 
 Message Message::fromJson(const QJsonObject &obj)
@@ -12,7 +11,6 @@ Message Message::fromJson(const QJsonObject &obj)
     m.finishReason = obj["finishReason"].toString();
     m.parts = obj["parts"].toArray();
 
-    // Parse createTime — handle Z suffix robustly
     QString ts = obj["createTime"].toString();
     m.createTime = QDateTime::fromString(ts, Qt::ISODateWithMs);
     if (!m.createTime.isValid() && ts.endsWith('Z'))
@@ -29,34 +27,38 @@ Message Message::fromJson(const QJsonObject &obj)
         m.driveDocumentId = di["id"].toString();
     }
 
-    // Check parts for inline image data (pasted images)
+    // Process parts array for attachments and text fallbacks
+    QStringList textParts;
     for (int i = 0; i < m.parts.size(); ++i)
     {
         QJsonObject part = m.parts[i].toObject();
-        QStringList keys = part.keys();
 
         if (part.contains("inlineData"))
         {
             QJsonObject inlineData = part["inlineData"].toObject();
-            m.inlineImageMime = inlineData["mimeType"].toString();
-            m.inlineImageData = inlineData["data"].toString();
+            InlineAttachment img;
+            img.mimeType = inlineData["mimeType"].toString();
+            img.data = inlineData["data"].toString();
+            m.inlineImages.append(img);
+        }
+
+        if (part.contains("text"))
+        {
+            textParts.append(part["text"].toString());
         }
     }
 
-    // Debug: confirm whether any attachment was parsed from the raw JSON chunk
-    bool hadDriveKey = obj.contains("driveDocument") || obj.contains("driveImage");
-    if (!m.driveDocumentId.isEmpty() || !m.inlineImageData.isEmpty() || hadDriveKey)
+    // Fallback: If root level text is empty, reconstruct from parts
+    if (m.text.isEmpty() && !textParts.isEmpty())
     {
-        Logger::instance().debug(
-            QString("[Attachment] Msg::fromJson role='%1' rawHadDriveKey=%2 driveDocId='%3' "
-                    "imageMime='%4' imageLen=%5 text='%6' time='%7'")
-                .arg(m.role)
-                .arg(hadDriveKey ? "true" : "false")
-                .arg(m.driveDocumentId,
-                     m.inlineImageMime)
-                .arg(m.inlineImageData.size())
-                .arg(m.text.left(40))
-                .arg(m.createTime.toString(Qt::ISODate)));
+        m.text = textParts.join("\n");
+    }
+
+    // Backwards compatibility for single inline image references
+    if (!m.inlineImages.isEmpty())
+    {
+        m.inlineImageData = m.inlineImages.first().data;
+        m.inlineImageMime = m.inlineImages.first().mimeType;
     }
 
     return m;

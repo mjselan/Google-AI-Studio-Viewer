@@ -4,7 +4,6 @@
 #include <QJsonObject>
 #include <QNetworkRequest>
 #include <QNetworkReply>
-#include <QUrl>
 
 CopilotApi::CopilotApi(QObject *parent)
     : QObject(parent)
@@ -13,10 +12,7 @@ CopilotApi::CopilotApi(QObject *parent)
 {
 }
 
-void CopilotApi::setBaseUrl(const QString &url)
-{
-    m_baseUrl = url;
-}
+void CopilotApi::setBaseUrl(const QString &url) { m_baseUrl = url; }
 
 void CopilotApi::fetchModels()
 {
@@ -25,28 +21,25 @@ void CopilotApi::fetchModels()
 
     auto *reply = m_net->get(req);
     connect(reply, &QNetworkReply::finished, this, [this, reply]()
-    {
-        reply->deleteLater();
+            {
+                reply->deleteLater();
+                if (reply->error() != QNetworkReply::NoError)
+                {
+                    emit connectionFailed(reply->errorString());
+                    return;
+                }
 
-        auto doc = QJsonDocument::fromJson(reply->readAll());
+                auto doc = QJsonDocument::fromJson(reply->readAll());
+                auto data = doc.object()["data"].toArray();
+                if (data.isEmpty())
+                {
+                    emit connectionFailed("No models returned by server.");
+                    return;
+                }
 
-        if (reply->error() != QNetworkReply::NoError)
-        {
-            QString errMsg = reply->errorString();
-            emit connectionFailed(errMsg);
-            return;
-        }
-        auto data = doc.object()["data"].toArray();
-        if (!data.isEmpty())
-        {
-            m_modelName = data.first().toObject()["id"].toString();
-            emit connected(m_modelName);
-        }
-        else
-        {
-            emit connectionFailed("No models returned");
-        }
-    });
+                m_modelName = data.first().toObject()["id"].toString();
+                emit connected(m_modelName);
+            });
 }
 
 void CopilotApi::sendMessage(const QString &prompt, const QString &conversationId)
@@ -71,35 +64,31 @@ void CopilotApi::sendMessage(const QString &prompt, const QString &conversationI
 
     auto *reply = m_net->post(req, QJsonDocument(body).toJson());
     connect(reply, &QNetworkReply::finished, this, [this, reply]()
-    {
-        reply->deleteLater();
+            {
+                reply->deleteLater();
+                auto doc = QJsonDocument::fromJson(reply->readAll());
+                auto root = doc.object();
 
-        auto doc = QJsonDocument::fromJson(reply->readAll());
-        auto root = doc.object();
+                if (reply->error() != QNetworkReply::NoError || root.contains("error"))
+                {
+                    QString errMsg = root.contains("error")
+                    ? root["error"].toObject()["message"].toString()
+                    : reply->errorString();
+                    emit errorOccurred(errMsg);
+                    return;
+                }
 
-        if (reply->error() != QNetworkReply::NoError)
-        {
-            QString errMsg;
-            if (root.contains("error"))
-                errMsg = root["error"].toObject()["message"].toString();
-            else
-                errMsg = reply->errorString();
+                QJsonArray choices = root["choices"].toArray();
+                if (choices.isEmpty())
+                {
+                    emit errorOccurred("Server returned empty choices array.");
+                    return;
+                }
 
-            emit errorOccurred(errMsg);
-            return;
-        }
+                QJsonObject firstChoice = choices.first().toObject();
+                QString content = firstChoice["message"].toObject()["content"].toString();
+                QString convId = root["conversation_id"].toString();
 
-        if (root.contains("error"))
-        {
-            QString errMsg = root["error"].toObject()["message"].toString();
-            emit errorOccurred(errMsg);
-            return;
-        }
-
-        QString content = root["choices"].toArray()
-            .first().toObject()["message"].toObject()["content"].toString();
-        QString convId = root["conversation_id"].toString();
-
-        emit responseReceived(content, convId);
-    });
+                emit responseReceived(content, convId);
+            });
 }

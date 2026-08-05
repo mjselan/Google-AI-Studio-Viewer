@@ -7,7 +7,6 @@
 #include <QJsonDocument>
 
 LocalCache::LocalCache() {}
-
 LocalCache::~LocalCache() {}
 
 void LocalCache::init()
@@ -19,8 +18,6 @@ void LocalCache::init()
     QDir().mkpath(dataDir);
     QString dbPath = dataDir + "/viewer_cache.db";
 
-    // Use a unique, named connection so re-initialization never triggers Qt's
-    // "connection 'qt_sql_default_connection' already exists" warning.
     static const QString connectionName = QStringLiteral("ViewerCacheConnection");
     if (QSqlDatabase::contains(connectionName))
     {
@@ -33,6 +30,7 @@ void LocalCache::init()
 
     if (!m_db.open())
     {
+        Logger::instance().error("Failed to open SQLite database: " + m_db.lastError().text());
         return;
     }
 
@@ -44,6 +42,7 @@ void LocalCache::init()
             "modified_time TEXT, "
             "json_data TEXT)"))
     {
+        Logger::instance().error("Failed to create table in cache: " + query.lastError().text());
         return;
     }
 
@@ -66,7 +65,10 @@ void LocalCache::saveConversation(const QString &fileId, const QString &fileName
     query.bindValue(":jdata", QString(QJsonDocument(data).toJson(QJsonDocument::Compact)));
 
     if (!query.exec())
-        return;
+    {
+        Logger::instance().error(
+            QString("Cache save failed for '%1': %2").arg(fileId, query.lastError().text()));
+    }
 }
 
 QJsonObject LocalCache::loadConversation(const QString &fileId)
