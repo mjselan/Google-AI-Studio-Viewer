@@ -58,6 +58,21 @@ ResponsePane::ResponsePane(QWidget *parent)
     m_layout->addWidget(m_browser);
 }
 
+void ResponsePane::setSearchTerm(const QString &term)
+{
+    m_searchTerm = term.trimmed();
+}
+
+QString ResponsePane::applySearchHighlight(const QString &text) const
+{
+    if (m_searchTerm.isEmpty())
+        return text;
+
+    QRegularExpression re(QRegularExpression::escape(m_searchTerm),
+                          QRegularExpression::CaseInsensitiveOption);
+    return QString(text).replace(re, "<mark style='background:#ffe066; color:#000;'>\\0</mark>");
+}
+
 void ResponsePane::showResponse(const Conversation::PromptResponsePair &pair,
                                 bool showThoughts, DriveApi *drive)
 {
@@ -67,9 +82,11 @@ void ResponsePane::showResponse(const Conversation::PromptResponsePair &pair,
 
     m_browser->clear();
 
+    QString promptHtml = applySearchHighlight(markdownToHtml(pair.prompt.text));
+
     m_browser->setHtml(
         "<h3>Prompt</h3><div style='padding:8px; margin:4px 0;'>"
-        + markdownToHtml(pair.prompt.text) + "</div><hr>");
+        + promptHtml + "</div><hr>");
 
     if (!pair.prompt.driveDocumentId.isEmpty())
     {
@@ -106,19 +123,21 @@ void ResponsePane::appendModelResponse(const QString &text, bool isThought, bool
         return;
 
     QString html;
+    QString processedText = applySearchHighlight(markdownToHtml(text));
+
     if (text.startsWith("ERROR: Cannot read"))
     {
         html = "<div style='background:#fff3cd; border:1px solid #ffc107; border-radius:4px; padding:8px; margin:4px 0;'>"
-               "<b>&#x26A0; Image not supported:</b><br>" + markdownToHtml(text) + "</div>";
+               "<b>&#x26A0; Image not supported:</b><br>" + processedText + "</div>";
     }
     else if (isThought)
     {
         html = "<div style='background:#f0f0f0; border-left:3px solid #888; padding:8px; margin:4px 0;'>"
-               "<i>Thought:</i><br>" + markdownToHtml(text) + "</div>";
+               "<i>Thought:</i><br>" + processedText + "</div>";
     }
     else
     {
-        html = "<div style='padding:8px; margin:4px 0;'>" + markdownToHtml(text) + "</div>";
+        html = "<div style='padding:8px; margin:4px 0;'>" + processedText + "</div>";
     }
 
     m_browser->append(html);
@@ -161,7 +180,7 @@ void ResponsePane::insertAttachmentInline(const QByteArray &data, const QString 
     }
     else if (mimeType.startsWith("text/") || mimeType.contains("json") || mimeType.contains("javascript"))
     {
-        m_browser->append("<h4>Attached file:</h4><pre>" + QString::fromUtf8(data).toHtmlEscaped() + "</pre>");
+        m_browser->append("<h4>Attached file:</h4><pre>" + applySearchHighlight(QString::fromUtf8(data).toHtmlEscaped()) + "</pre>");
     }
     else
     {
@@ -198,4 +217,5 @@ void ResponsePane::clear()
         disconnect(m_attachmentConn);
     m_attachmentConn = QMetaObject::Connection();
     m_browser->clear();
+    m_searchTerm.clear();
 }

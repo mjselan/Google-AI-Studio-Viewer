@@ -11,6 +11,7 @@ public:
     explicit PromptListPane(QWidget *parent = nullptr);
 
     void setConversation(const Conversation &conv);
+    void setSearchTerm(const QString &term);
     void clear();
     int currentIndex() const;
 
@@ -22,4 +23,5 @@ private:
 
     QListWidget *m_list;
     Conversation m_currentConv;
+    QString m_searchTerm;
 };

@@ -2,6 +2,74 @@
 #include "app/Logger.h"
 #include <QVBoxLayout>
 #include <QLabel>
+#include <QStyledItemDelegate>
+#include <QPainter>
+#include <QTextDocument>
+#include <QRegularExpression>
+#include <QApplication>
+
+// Custom HTML delegate for QListWidget so bold tags <b> match Qt themes cleanly
+class HtmlDelegate : public QStyledItemDelegate
+{
+public:
+    explicit HtmlDelegate(QObject *parent = nullptr) : QStyledItemDelegate(parent) {}
+
+    void paint(QPainter *painter, const QStyleOptionViewItem &option,
+               const QModelIndex &index) const override
+    {
+        QStyleOptionViewItem options = option;
+        initStyleOption(&options, index);
+
+        painter->save();
+
+        QStyle *style = options.widget ? options.widget->style() : QApplication::style();
+        style->drawPrimitive(QStyle::PE_PanelItemViewItem, &options, painter, options.widget);
+
+        QTextDocument doc;
+        doc.setDefaultFont(options.font);
+
+        bool isSelected = (options.state & QStyle::State_Selected);
+        QColor textColor = options.palette.color(
+            isSelected ? QPalette::Active : QPalette::Normal,
+            isSelected ? QPalette::HighlightedText : QPalette::Text
+            );
+
+        QString html = QString("<div style='color: %1;'>%2</div>")
+                           .arg(textColor.name(), options.text);
+        doc.setHtml(html);
+
+        QRect textRect = style->subElementRect(QStyle::SE_ItemViewItemText, &options, options.widget);
+        painter->translate(textRect.left() + 2, textRect.top() + 2);
+        QRect clip(0, 0, textRect.width() - 4, textRect.height() - 4);
+        doc.drawContents(painter, clip);
+
+        painter->restore();
+    }
+
+    QSize sizeHint(const QStyleOptionViewItem &option,
+                   const QModelIndex &index) const override
+    {
+        QStyleOptionViewItem options = option;
+        initStyleOption(&options, index);
+        QTextDocument doc;
+        doc.setDefaultFont(options.font);
+        doc.setHtml(options.text);
+        return QSize(qRound(doc.idealWidth()) + 10, qMax(44, qRound(doc.size().height()) + 8));
+    }
+};
+
+static QString highlightSearchHits(const QString &srcText, const QString &term)
+{
+    if (term.trimmed().isEmpty())
+        return srcText.toHtmlEscaped();
+
+    QString escapedSrc = srcText.toHtmlEscaped();
+    QString escapedTerm = term.trimmed().toHtmlEscaped();
+
+    QRegularExpression re(QRegularExpression::escape(escapedTerm),
+                          QRegularExpression::CaseInsensitiveOption);
+    return escapedSrc.replace(re, "<b>\\0</b>");
+}
 
 PromptListPane::PromptListPane(QWidget *parent)
     : QWidget(parent)
@@ -12,12 +80,14 @@ PromptListPane::PromptListPane(QWidget *parent)
     auto *header = new QLabel("User Prompts", this);
     header->setStyleSheet("font-weight: bold; padding: 4px;");
     layout->addWidget(header);
+
+    m_list->setItemDelegate(new HtmlDelegate(m_list));
     layout->addWidget(m_list);
 
     connect(m_list, &QListWidget::currentRowChanged, this, [this](int row)
-    {
-        emit promptSelected(row);
-    });
+            {
+                emit promptSelected(row);
+            });
 }
 
 void PromptListPane::setConversation(const Conversation &conv)
@@ -26,10 +96,17 @@ void PromptListPane::setConversation(const Conversation &conv)
     refreshList();
 }
 
+void PromptListPane::setSearchTerm(const QString &term)
+{
+    m_searchTerm = term.trimmed();
+    refreshList();
+}
+
 void PromptListPane::clear()
 {
     m_list->clear();
     m_currentConv = Conversation();
+    m_searchTerm.clear();
 }
 
 int PromptListPane::currentIndex() const
@@ -55,15 +132,19 @@ void PromptListPane::refreshList()
         else if (preview.isEmpty())
             preview = "(empty prompt)";
 
-        QString dateStr = pair.prompt.createTime.isValid()
-            ? pair.prompt.createTime.toLocalTime().toString("yyyy-MM-dd hh:mm:ss")
-            : "no-time";
+        QString previewHtml = highlightSearchHits(preview, m_searchTerm);
+        previewHtml.replace("\n", "<br>");
 
-        auto *item = new QListWidgetItem(
-            QString("%1\n[%2 tok]  %3")
-                .arg(preview)
-                .arg(pair.prompt.tokenCount)
-                .arg(dateStr));
+        QString dateStr = pair.prompt.createTime.isValid()
+                              ? pair.prompt.createTime.toLocalTime().toString("yyyy-MM-dd hh:mm:ss")
+                              : "no-time";
+
+        QString itemHtml = QString("<div>%1</div><div style='font-size:11px; opacity:0.75;'>[%2 tok]  %3</div>")
+                               .arg(previewHtml)
+                               .arg(pair.prompt.tokenCount)
+                               .arg(dateStr);
+
+        auto *item = new QListWidgetItem(itemHtml);
         m_list->addItem(item);
     }
 

@@ -2,7 +2,6 @@
 #include "ConversationListPane.h"
 #include "PromptListPane.h"
 #include "ResponsePane.h"
-#include "SearchDialog.h"
 #include "app/AuthManager.h"
 #include "api/DriveApi.h"
 #include "api/CopilotApi.h"
@@ -24,8 +23,6 @@
 #include <QMenu>
 #include <QMenuBar>
 
-//#define MAX_CONVERSATIONS 4
-
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , m_auth(new AuthManager(this))
@@ -35,7 +32,7 @@ MainWindow::MainWindow(QWidget *parent)
     , m_convPane(new ConversationListPane(this))
     , m_promptPane(new PromptListPane(this))
     , m_responsePane(new ResponsePane(this))
-    , m_searchDlg(nullptr)
+    , m_searchTimer(new QTimer(this))
 {
     setupUi();
     setupToolbar();
@@ -43,97 +40,133 @@ MainWindow::MainWindow(QWidget *parent)
     setupStatusBar();
     m_cache.init();
 
+    m_searchTimer->setSingleShot(true);
+    m_searchTimer->setInterval(400);
+
     connect(m_auth, &AuthManager::authSuccess, this, [this](const QString &message)
-    {
-        m_drive->setAccessToken(m_auth->accessToken());
-        m_drive->findFolder("Google AI Studio");
-        m_signInAction->setVisible(false);
-        m_signOutAction->setVisible(true);
-        statusBar()->showMessage(message);
-    });
+            {
+                m_drive->setAccessToken(m_auth->accessToken());
+                m_drive->findFolder("Google AI Studio");
+                m_signInAction->setVisible(false);
+                m_signOutAction->setVisible(true);
+                statusBar()->showMessage(message);
+            });
 
     connect(m_auth, &AuthManager::authFailed, this, [this](const QString &err)
-    {
-        statusBar()->showMessage("Auth failed: " + err);
-        QMessageBox::warning(this, "Auth Error", err);
-    });
+            {
+                statusBar()->showMessage("Auth failed: " + err);
+                QMessageBox::warning(this, "Auth Error", err);
+            });
 
     connect(m_drive, &DriveApi::folderFound, this, [this](const QString &folderId)
-    {
-        onFolderFound(folderId);
-    });
+            {
+                onFolderFound(folderId);
+            });
     connect(m_drive, &DriveApi::folderNotFound, this, [this]()
-    {
-        statusBar()->showMessage("'Google AI Studio' folder not found in Drive");
-    });
+            {
+                statusBar()->showMessage("'Google AI Studio' folder not found in Drive");
+            });
     connect(m_drive, &DriveApi::conversationListReady, this, &MainWindow::onConversationsLoaded);
     connect(m_drive, &DriveApi::conversationDownloaded, this,
-        [this](const QString &fileId, const QString &fileName, const QJsonObject &data)
-        {
-            QDateTime modTime;
-            for (const auto &f : m_conversationFiles)
+            [this](const QString &fileId, const QString &fileName, const QJsonObject &data)
             {
-                if (f.fileId == fileId)
+                QDateTime modTime;
+                for (const auto &f : m_conversationFiles)
                 {
-                    modTime = f.modifiedTime;
-                    break;
+                    if (f.fileId == fileId)
+                    {
+                        modTime = f.modifiedTime;
+                        break;
+                    }
                 }
-            }
-            m_cache.saveConversation(fileId, fileName, modTime, data);
+                m_cache.saveConversation(fileId, fileName, modTime, data);
 
-            Conversation conv = m_convModel->parseConversation(fileId, fileName, data);
-            m_convPane->addConversation(conv);
+                Conversation conv = m_convModel->parseConversation(fileId, fileName, data);
+                m_convPane->addConversation(conv);
 
-            if (m_selectedFileId == fileId)
-            {
-                int idx = indexForFileId();
-                if (idx >= 0)
-                    onConversationSelected(idx);
-            }
-        });
+                if (m_selectedFileId == fileId)
+                {
+                    int idx = indexForFileId();
+                    if (idx >= 0)
+                        onConversationSelected(idx);
+                }
+            });
     connect(m_drive, &DriveApi::apiError, this, [this](const QString &err)
-    {
-        statusBar()->showMessage("API error: " + err);
-    });
+            {
+                statusBar()->showMessage("API error: " + err);
+            });
 
     connect(m_drive, &DriveApi::tokenNeedsRefresh, this, [this]()
-    {
-        statusBar()->showMessage("Token expired. Refreshing...");
-        m_auth->refreshAccessToken();
-    });
+            {
+                statusBar()->showMessage("Token expired. Refreshing...");
+                m_auth->refreshAccessToken();
+            });
 
     connect(m_auth, &AuthManager::tokenRefreshed, this, [this]()
-    {
-        m_drive->setAccessToken(m_auth->accessToken());
-        m_drive->retryPendingRequests();
-        statusBar()->showMessage("Token refreshed. Continuing...");
-    });
+            {
+                m_drive->setAccessToken(m_auth->accessToken());
+                m_drive->retryPendingRequests();
+                statusBar()->showMessage("Token refreshed. Continuing...");
+            });
 
     connect(m_convPane, &ConversationListPane::conversationSelected,
-        this, &MainWindow::onConversationSelected);
+            this, &MainWindow::onConversationSelected);
     connect(m_convPane, &ConversationListPane::refreshRequested, this,
-        [this](const QString &fileId, const QString &fileName)
-        {
-            m_drive->downloadConversation(fileId, fileName);
-        });
+            [this](const QString &fileId, const QString &fileName)
+            {
+                m_drive->downloadConversation(fileId, fileName);
+            });
     connect(m_promptPane, &PromptListPane::promptSelected,
-        this, &MainWindow::onPromptSelected);
+            this, &MainWindow::onPromptSelected);
 
     connect(m_auth, &AuthManager::authCodeRequired, this,
-        [this](const QString &authUrl)
-        {
-            Q_UNUSED(authUrl)
-            statusBar()->showMessage(
-                "Sign in in progress. Complete the authorization in your browser...");
-        });
+            [this](const QString &authUrl)
+            {
+                Q_UNUSED(authUrl)
+                statusBar()->showMessage(
+                    "Sign in in progress. Complete the authorization in your browser...");
+            });
 
     connect(m_copilot, &CopilotApi::connected, this, &MainWindow::onCopilotConnected);
     connect(m_copilot, &CopilotApi::connectionFailed, this, [this](const QString &err)
-    {
-        statusBar()->showMessage("Local server connection failed: " + err);
-    });
+            {
+                statusBar()->showMessage("Local server connection failed: " + err);
+            });
     connect(m_copilot, &CopilotApi::responseReceived, this, &MainWindow::onCopilotResponse);
     connect(m_copilot, &CopilotApi::errorOccurred, this, &MainWindow::onCopilotError);
+
+    connect(m_drive, &DriveApi::searchResultsReady, this, [this](const QList<DriveFile> &results)
+            {
+                if (m_activeSearchTerm.isEmpty())
+                    return;
+
+                QSet<QString> matchingIds;
+                for (const auto &df : results)
+                    matchingIds.insert(df.fileId);
+
+                for (const auto &conv : m_localConversations)
+                {
+                    if (conv.displayTitle().contains(m_activeSearchTerm, Qt::CaseInsensitive))
+                        matchingIds.insert(conv.fileId);
+                }
+
+                m_convPane->setFilterFileIds(matchingIds);
+
+                statusBar()->showMessage(
+                    QString("Search for '%1': %2 matching conversation(s).")
+                        .arg(m_activeSearchTerm)
+                        .arg(matchingIds.size()));
+
+                if (m_convPane->conversationCount() > 0)
+                {
+                    onConversationSelected(0);
+                }
+                else
+                {
+                    m_promptPane->clear();
+                    m_responsePane->clear();
+                }
+            });
 
     connect(m_sendButton, &QPushButton::clicked, this, &MainWindow::onSendPrompt);
     connect(m_chatInput, &QLineEdit::returnPressed, this, &MainWindow::onSendPrompt);
@@ -189,7 +222,7 @@ void MainWindow::setupToolbar()
     m_backendCombo->addItems({"Google AI Studio", "Local Server (Copilot)"});
     m_toolbar->addWidget(m_backendCombo);
     connect(m_backendCombo, &QComboBox::currentIndexChanged,
-        this, &MainWindow::onBackendChanged);
+            this, &MainWindow::onBackendChanged);
 
     m_toolbar->addSeparator();
 
@@ -202,8 +235,20 @@ void MainWindow::setupToolbar()
 
     m_toolbar->addSeparator();
 
-    m_searchAction = m_toolbar->addAction("Search");
-    connect(m_searchAction, &QAction::triggered, this, &MainWindow::onSearchTriggered);
+    // Inline Toolbar Search Bar
+    m_searchInput = new QLineEdit(this);
+    m_searchInput->setPlaceholderText("Search conversations...");
+    m_searchInput->setClearButtonEnabled(true);
+    m_searchInput->setMaximumWidth(220);
+    m_toolbar->addWidget(m_searchInput);
+
+    connect(m_searchInput, &QLineEdit::textChanged, this, [this](const QString &)
+            {
+                m_searchTimer->start();
+            });
+    connect(m_searchTimer, &QTimer::timeout, this, &MainWindow::onSearchInputChanged);
+
+    m_toolbar->addSeparator();
 
     m_toggleThoughts = m_toolbar->addAction("Show Thoughts");
     m_toggleThoughts->setCheckable(true);
@@ -216,7 +261,31 @@ void MainWindow::setupToolbar()
     m_sortCombo->addItems({"Newest First", "Oldest First", "Alphabetical A-Z", "Alphabetical Z-A"});
     m_toolbar->addWidget(m_sortCombo);
     connect(m_sortCombo, &QComboBox::currentIndexChanged,
-        this, &MainWindow::onSortChanged);
+            this, &MainWindow::onSortChanged);
+}
+
+void MainWindow::onSearchInputChanged()
+{
+    QString query = m_searchInput->text().trimmed();
+    m_activeSearchTerm = query;
+
+    if (query.isEmpty())
+    {
+        m_convPane->clearFilter();
+        m_promptPane->setSearchTerm(QString());
+        m_responsePane->setSearchTerm(QString());
+        statusBar()->showMessage("Search filter cleared.");
+        return;
+    }
+
+    if (query.length() < 2)
+        return;
+
+    statusBar()->showMessage(QString("Searching for '%1'...").arg(query));
+    m_promptPane->setSearchTerm(query);
+    m_responsePane->setSearchTerm(query);
+
+    m_drive->searchConversations(query);
 }
 
 void MainWindow::setupStatusBar()
@@ -230,13 +299,13 @@ void MainWindow::setupMenuBar()
 
     QAction *deleteLog = fileMenu->addAction("Delete log file");
     connect(deleteLog, &QAction::triggered, this, [this]()
-    {
-        QString path = Logger::instance().logFilePath();
-        Logger::instance().deleteLogFile();
-        statusBar()->showMessage(path.isEmpty()
-            ? "No log file to delete."
-            : "Log file deleted: " + path);
-    });
+            {
+                QString path = Logger::instance().logFilePath();
+                Logger::instance().deleteLogFile();
+                statusBar()->showMessage(path.isEmpty()
+                                             ? "No log file to delete."
+                                             : "Log file deleted: " + path);
+            });
 }
 
 void MainWindow::onBackendChanged(int index)
@@ -403,15 +472,15 @@ void MainWindow::onSignIn()
     {
         bool ok;
         QString clientId = QInputDialog::getText(this, "Google API Credentials",
-            "oauth_config.json not found at:\n" + configPath + "\n\n"
-            "Enter your Google Drive Client ID:",
-            QLineEdit::Normal, QString(), &ok);
+                                                 "oauth_config.json not found at:\n" + configPath + "\n\n"
+                                                                                                    "Enter your Google Drive Client ID:",
+                                                 QLineEdit::Normal, QString(), &ok);
         if (!ok || clientId.trimmed().isEmpty())
             return;
 
         QString clientSecret = QInputDialog::getText(this, "Google API Credentials",
-            "Enter your Google Drive Client Secret:",
-            QLineEdit::Password, QString(), &ok);
+                                                     "Enter your Google Drive Client Secret:",
+                                                     QLineEdit::Password, QString(), &ok);
         if (!ok || clientSecret.trimmed().isEmpty())
             return;
 
@@ -505,7 +574,6 @@ void MainWindow::onConversationSelected(int index)
                 m_promptPane->clear();
                 m_responsePane->clear();
 
-                // addConversation may re-sort the list, so re-locate by fileId.
                 int newIndex = indexForFileId();
                 if (newIndex >= 0)
                     onConversationSelected(newIndex);
@@ -563,49 +631,6 @@ void MainWindow::onPromptSelected(int pairIndex)
     bool showThoughts = m_toggleThoughts->isChecked();
 
     m_responsePane->showResponse(pair, showThoughts, m_drive);
-}
-
-void MainWindow::onSearchTriggered()
-{
-    if (!m_searchDlg)
-    {
-        m_searchDlg = new SearchDialog(this);
-        connect(m_searchDlg, &SearchDialog::searchRequested, this, [this](const QString &query)
-        {
-            m_drive->searchConversations(query);
-        });
-        connect(m_drive, &DriveApi::searchResultsReady, m_searchDlg, &SearchDialog::setResults);
-        connect(m_searchDlg, &SearchDialog::resultClicked, this, [this](const QString &fileId, const QString &fileName, const QDateTime &modTime)
-        {
-            // Check if this conversation is already in the pane
-            for (int i = 0; i < m_convPane->conversationCount(); ++i)
-            {
-                if (m_convPane->conversationAt(i).fileId == fileId)
-                {
-                    m_convPane->selectByFileId(fileId);
-                    return;
-                }
-            }
-
-            // Not in list — add as a stub and trigger load
-            DriveFile df;
-            df.fileId = fileId;
-            df.fileName = fileName;
-            df.modifiedTime = modTime;
-            m_conversationFiles.append(df);
-
-            Conversation stub;
-            stub.fileId = fileId;
-            stub.fileName = fileName;
-            stub.lastModified = df.modifiedTime;
-            m_convPane->addConversation(stub);
-            m_convPane->selectByFileId(fileId);
-        });
-    }
-
-    m_searchDlg->show();
-    m_searchDlg->raise();
-    m_searchDlg->activateWindow();
 }
 
 void MainWindow::onToggleThoughts(bool visible)

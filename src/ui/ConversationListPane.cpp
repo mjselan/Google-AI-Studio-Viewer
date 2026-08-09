@@ -18,36 +18,36 @@ ConversationListPane::ConversationListPane(QWidget *parent)
     layout->addWidget(m_list);
 
     connect(m_list, &QListWidget::currentRowChanged, this, [this](int row)
-    {
-        if (row >= 0 && row < m_rowToConv.size())
-        {
-            int convIndex = m_rowToConv[row];
-            emit conversationSelected(convIndex);
-        }
-    });
+            {
+                if (row >= 0 && row < m_rowToConv.size())
+                {
+                    int convIndex = m_rowToConv[row];
+                    emit conversationSelected(convIndex);
+                }
+            });
 
     m_list->setContextMenuPolicy(Qt::CustomContextMenu);
     connect(m_list, &QWidget::customContextMenuRequested, this, [this](const QPoint &pos)
-    {
-        QListWidgetItem *item = m_list->itemAt(pos);
-        if (!item)
-            return;
+            {
+                QListWidgetItem *item = m_list->itemAt(pos);
+                if (!item)
+                    return;
 
-        int row = m_list->row(item);
-        if (row < 0 || row >= m_rowToConv.size())
-            return;
+                int row = m_list->row(item);
+                if (row < 0 || row >= m_rowToConv.size())
+                    return;
 
-        int convIdx = m_rowToConv[row];
-        const auto &conv = m_conversations[convIdx];
+                int convIdx = m_rowToConv[row];
+                const auto &conv = m_conversations[convIdx];
 
-        QMenu menu(this);
-        QAction *refreshAction = menu.addAction("Refresh");
-        connect(refreshAction, &QAction::triggered, this, [this, conv]()
-        {
-            emit refreshRequested(conv.fileId, conv.fileName);
-        });
-        menu.exec(m_list->mapToGlobal(pos));
-    });
+                QMenu menu(this);
+                QAction *refreshAction = menu.addAction("Refresh");
+                connect(refreshAction, &QAction::triggered, this, [this, conv]()
+                        {
+                            emit refreshRequested(conv.fileId, conv.fileName);
+                        });
+                menu.exec(m_list->mapToGlobal(pos));
+            });
 }
 
 bool ConversationListPane::isValidConv(const Conversation &conv) const
@@ -87,11 +87,27 @@ void ConversationListPane::addConversation(const Conversation &conv)
     refreshList();
 }
 
+void ConversationListPane::setFilterFileIds(const QSet<QString> &matchingFileIds)
+{
+    m_filterFileIds = matchingFileIds;
+    m_hasFilter = true;
+    refreshList();
+}
+
+void ConversationListPane::clearFilter()
+{
+    m_filterFileIds.clear();
+    m_hasFilter = false;
+    refreshList();
+}
+
 void ConversationListPane::clear()
 {
     m_conversations.clear();
     m_rowToConv.clear();
     m_fileList.clear();
+    m_filterFileIds.clear();
+    m_hasFilter = false;
     m_list->clear();
     m_filesPopulated = 0;
 }
@@ -125,6 +141,10 @@ void ConversationListPane::refreshList()
 
         if (!isValidConv(conv)) continue;
 
+        // Search mode filter: show ONLY matching conversations
+        if (m_hasFilter && !m_filterFileIds.contains(conv.fileId))
+            continue;
+
         m_rowToConv.append(i);
         QString title = conv.displayTitle();
         bool isDownloaded = !conv.model.isEmpty() || !conv.messages.isEmpty();
@@ -132,16 +152,16 @@ void ConversationListPane::refreshList()
         QString dateStr;
         if (isDownloaded)
             dateStr = conv.lastMessageTime().isValid()
-                ? conv.lastMessageTime().toLocalTime().toString("yyyy-MM-dd hh:mm:ss")
-                : "";
+                          ? conv.lastMessageTime().toLocalTime().toString("yyyy-MM-dd hh:mm:ss")
+                          : "";
         else
             dateStr = conv.lastModified.isValid()
-                ? conv.lastModified.toLocalTime().toString("yyyy-MM-dd hh:mm:ss")
-                : "";
+                          ? conv.lastModified.toLocalTime().toString("yyyy-MM-dd hh:mm:ss")
+                          : "";
 
         QString labelText = dateStr.isEmpty()
-            ? title
-            : QString("%1\n%2").arg(title, dateStr);
+                                ? title
+                                : QString("%1\n%2").arg(title, dateStr);
 
         auto *item = new QListWidgetItem(labelText);
         item->setToolTip(conv.fileName);
@@ -164,8 +184,6 @@ void ConversationListPane::refreshList()
 
 void ConversationListPane::applySort()
 {
-    // Chronological comparator helpers — use epoch milliseconds so sorting is
-    // robust when timestamps carry different timezone offsets.
     auto sortTimeMs = [](const Conversation &c) -> qint64
     {
         QDateTime t = c.messages.isEmpty() ? c.lastModified : c.messages.last().createTime;
@@ -176,27 +194,27 @@ void ConversationListPane::applySort()
     {
     case NewestFirst:
         std::sort(m_conversations.begin(), m_conversations.end(),
-            [sortTimeMs](const Conversation &a, const Conversation &b)
-            {
-                return sortTimeMs(a) > sortTimeMs(b);
-            });
+                  [sortTimeMs](const Conversation &a, const Conversation &b)
+                  {
+                      return sortTimeMs(a) > sortTimeMs(b);
+                  });
         break;
     case OldestFirst:
         std::sort(m_conversations.begin(), m_conversations.end(),
-            [sortTimeMs](const Conversation &a, const Conversation &b)
-            {
-                return sortTimeMs(a) < sortTimeMs(b);
-            });
+                  [sortTimeMs](const Conversation &a, const Conversation &b)
+                  {
+                      return sortTimeMs(a) < sortTimeMs(b);
+                  });
         break;
     case AlphaAZ:
         std::sort(m_conversations.begin(), m_conversations.end(),
-            [](const Conversation &a, const Conversation &b)
-            { return a.fileName.toLower() < b.fileName.toLower(); });
+                  [](const Conversation &a, const Conversation &b)
+                  { return a.fileName.toLower() < b.fileName.toLower(); });
         break;
     case AlphaZA:
         std::sort(m_conversations.begin(), m_conversations.end(),
-            [](const Conversation &a, const Conversation &b)
-            { return a.fileName.toLower() > b.fileName.toLower(); });
+                  [](const Conversation &a, const Conversation &b)
+                  { return a.fileName.toLower() > b.fileName.toLower(); });
         break;
     }
 }

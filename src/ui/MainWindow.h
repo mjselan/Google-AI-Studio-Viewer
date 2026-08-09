@@ -10,6 +10,7 @@
 #include <QPushButton>
 #include <QWidget>
 #include <QHBoxLayout>
+#include <QTimer>
 #include "models/Conversation.h"
 #include "api/LocalCache.h"
 
@@ -21,7 +22,6 @@ class ConversationModel;
 class ConversationListPane;
 class PromptListPane;
 class ResponsePane;
-class SearchDialog;
 
 class MainWindow : public QMainWindow
 {
@@ -37,11 +37,11 @@ private slots:
     void onConversationsLoaded(const QList<DriveFile> &files);
     void onConversationSelected(int index);
     void onPromptSelected(int pairIndex);
-    void onSearchTriggered();
     void onToggleThoughts(bool visible);
     void onSortChanged(int index);
     void onBackendChanged(int index);
     void onSendPrompt();
+    void onSearchInputChanged();
     void onCopilotConnected(const QString &modelName);
     void onCopilotResponse(const QString &content, const QString &conversationId);
     void onCopilotError(const QString &error);
@@ -66,7 +66,6 @@ private:
     ConversationListPane *m_convPane;
     PromptListPane *m_promptPane;
     ResponsePane *m_responsePane;
-    SearchDialog *m_searchDlg;
 
     QSplitter *m_mainSplitter;
     QSplitter *m_leftSplitter;
@@ -74,10 +73,12 @@ private:
 
     QAction *m_signInAction;
     QAction *m_signOutAction;
-    QAction *m_searchAction;
     QAction *m_toggleThoughts;
     QComboBox *m_sortCombo;
     QComboBox *m_backendCombo;
+    QLineEdit *m_searchInput;
+    QTimer *m_searchTimer;
+
     QWidget *m_chatBar;
     QLineEdit *m_chatInput;
     QPushButton *m_sendButton;
@@ -85,6 +86,7 @@ private:
     QString m_currentFolderId;
     QList<DriveFile> m_conversationFiles;
     QString m_selectedFileId;
+    QString m_activeSearchTerm;
 
     // Local (Copilot) conversation state
     QList<Conversation> m_localConversations;

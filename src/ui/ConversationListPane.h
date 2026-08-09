@@ -3,6 +3,7 @@
 #include <QWidget>
 #include <QListWidget>
 #include <QList>
+#include <QSet>
 #include "models/Conversation.h"
 
 struct DriveFile;
@@ -17,6 +18,8 @@ public:
 
     void setFileList(const QList<DriveFile> &files);
     void addConversation(const Conversation &conv);
+    void setFilterFileIds(const QSet<QString> &matchingFileIds);
+    void clearFilter();
     void clear();
     int conversationCount() const;
     const Conversation &conversationAt(int index) const;
@@ -36,8 +39,10 @@ private:
 
     QListWidget *m_list;
     QList<Conversation> m_conversations;
-    QList<int> m_rowToConv;  // visual row → m_conversations index
+    QList<int> m_rowToConv;
     QList<DriveFile> m_fileList;
+    QSet<QString> m_filterFileIds;
+    bool m_hasFilter = false;
     SortMode m_sortMode = NewestFirst;
     int m_filesPopulated = 0;
 };

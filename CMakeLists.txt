@@ -28,7 +28,6 @@ set(SOURCES
     src/ui/ResponsePane.cpp
     src/ui/FilePreviewWidget.cpp
     src/ui/ImageViewerDialog.cpp
-    src/ui/SearchDialog.cpp
 )
 
 set(HEADERS
@@ -48,11 +47,14 @@ set(HEADERS
     src/ui/ResponsePane.h
     src/ui/FilePreviewWidget.h
     src/ui/ImageViewerDialog.h
-    src/ui/SearchDialog.h
 )
 
-add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS}
-    src/app/patch.diff)
+qt_add_executable(${PROJECT_NAME}
+    MANUAL_FINALIZATION
+    ${SOURCES}
+    ${HEADERS}
+)
+
 if(WIN32)
     set_target_properties(${PROJECT_NAME} PROPERTIES WIN32_EXECUTABLE TRUE)
 elseif(APPLE)
@@ -73,3 +75,5 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 )
 
 target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+
+qt_finalize_executable(${PROJECT_NAME})

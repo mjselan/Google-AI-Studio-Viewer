@@ -1,105 +1,99 @@
-Google AI Studio Viewer
-A high-performance C++/Qt desktop application for browsing, caching, searching, and managing Google AI Studio conversations directly synced from Google Drive. It also supports interactive chat via local OpenAI-compatible server endpoints (e.g., Local Copilot/LLM servers).
-       
+# Google AI Studio Viewer
 
-🌟 Key Features
-Google Drive Sync & OAuth 2.0 Integration: 
-Native desktop OAuth 2.0 authorization with an embedded loopback HTTP server (QTcpServer) for redirect handling (no deprecated OOB flows).
-Automatic token persistence and non-blocking background refresh.
-Smart Parsing & Conversation Structuring: 
-Reconstructs raw JSON exports from Google AI Studio into structured, chronological user prompt–model response pairs.
-Handles complex multi-turn conversations, system instructions, token count metrics, and thought process signatures.
-Inline Media & Attachment Rendering: 
-Previews text files, source code (<pre> formatted), and embedded/inline images directly in the response pane.
-Interactive image viewer modal with zoom, fit-to-screen, 1:1 scale, and export capabilities.
-Offline Caching (SQLite): 
-Local persistence layer (QSqlDatabase) caches downloaded conversations to enable instant startup and offline reading.
-Full-Text Drive Search: 
-Integrated search dialog with debounced input querying Google Drive files across conversations.
-Dual Backend Support: 
-Switch seamlessly between remote Google AI Studio archives and local OpenAI-compatible endpoints (/v1/chat/completions).
-Rich Text & Markdown Rendering: 
-Pre-processes Markdown (strikethroughs, checklist items, code blocks) into clean, styled HTML for rendering inside Qt text documents.
+A desktop application (Qt/C++) for browsing and reading [Google AI Studio](https://aistudio.google.com/) conversation exports stored in Google Drive. It authenticates with your Google account, lists conversation files from Drive, and renders each conversation as a readable list of prompt/response pairs — including inline images, file attachments, and model "thoughts."
 
-🛠️ Architecture & Technical Highlights
-This project was built from the ground up prioritizing modern C++ practices, clean architecture, and responsive desktop UI design.
-Project Structure
-GoogleAIViewer/
-├── src/
-│   ├── api/              # Network & Storage Services
-│   │   ├── ConversationModel.cpp/h  # JSON parser & message pairing logic
-│   │   ├── CopilotApi.cpp/h         # Local LLM endpoint client
-│   │   ├── DriveApi.cpp/h           # Google Drive v3 REST client
-│   │   └── LocalCache.cpp/h         # SQLite database management layer
-│   ├── app/              # Core Application & Infrastructure
-│   │   ├── Application.cpp/h        # QApp subclass & global settings
-│   │   ├── AuthManager.cpp/h        # OAuth 2.0 client & HTTP loopback server
-│   │   └── Logger.cpp/h             # Thread-safe file & console logger
-│   ├── models/           # Data Structures
-│   │   ├── Conversation.h           # Represents a full conversation thread
-│   │   ├── Message.cpp/h            # Individual user/model prompt structure
-│   │   └── FileAttachment.h         # Attachment payload representation
-│   ├── ui/               # Qt Graphical Interface
-│   │   ├── ConversationListPane.cpp/h # Conversation sidebar list
-│   │   ├── PromptListPane.cpp/h       # Prompt selection panel
-│   │   ├── ResponsePane.cpp/h         # HTML/Markdown chat viewer
-│   │   ├── FilePreviewWidget.cpp/h    # Inline widget for previewing files
-│   │   ├── ImageViewerDialog.cpp/h    # Fullscreen image inspection modal
-│   │   ├── SearchDialog.cpp/h         # Drive search dialog
-│   │   └── MainWindow.cpp/h           # Main UI container & orchestration
-│   └── main.cpp
-├── CMakeLists.txt        # Build configuration
-└── README.md
-Engineering Highlights (For Code Reviewers)
-Asynchronous I/O & Non-Blocking UI: All network transactions (QNetworkAccessManager) and database queries operate asynchronously to ensure the UI thread remains 60 FPS responsive.
-Memory Management & RAII: Strict object ownership hierarchy utilizing Qt's parent-child system, std::unique_ptr, and RAII memory cleanup.
-Explicit Signal/Slot Connection Lifecycle: Network callbacks use explicit QMetaObject::Connection tracking to prevent dangling lambdas or memory leaks across view refresh cycles.
-Timezone-Robust Data Sorting: Message parsing and UI list ordering utilize UTC epoch millisecond metrics (toMSecsSinceEpoch()) to avoid timezone offsets causing misordered conversation histories.
-Security & OAuth Compliance: Implements a dedicated local HTTP server (http://127.0.0.1:<port>/callback) for Google OAuth 2.0 PKCE/Loopback authorization. Query string parameters are escaped to avoid injection issues.
+## Features
 
-📋 Prerequisites
-C++ Compiler: C++17 support required (MSVC 2019+, GCC 9+, Clang 10+).
-Qt Framework: Qt 5.15+ or Qt 6.x (Modules required: Core, Gui, Widgets, Network, Sql).
-CMake: Version 3.16 or higher.
+- **Google Drive integration** — signs in via OAuth 2.0, locates your AI Studio conversations folder, and lists/searches conversation files.
+- **Conversation viewer** — parses AI Studio's `chunkedPrompt` JSON format into chronological messages and pairs each user prompt with its model response(s).
+- **Rich response rendering** — renders markdown-formatted model output, inline images (base64), and downloaded Drive attachments (images, text, JSON, etc.) directly in the response pane.
+- **Full-text search** — debounced search across conversations stored in your Drive folder.
+- **Local cache** — conversations are cached in a local SQLite database so previously viewed conversations load instantly and can be revisited offline.
+- **Thoughts toggle** — optionally show or hide the model's intermediate "thought" chunks.
+- **Optional local Copilot-style API client** — a small client for talking to an OpenAI-compatible local server (e.g. `http://localhost:8000`) for model listing/completions, separate from the Drive-based viewer flow.
 
-⚙️ Building the Application
-Using CMake
-Clone the repository:
-git clone https://github.com/your-username/google-ai-studio-viewer.git
-cd google-ai-studio-viewer
-Configure and build:
-mkdir build && cd build
-cmake ..
-cmake --build . --config Release
-Run the executable:
-./GoogleAIViewer
+## Architecture
 
-🔑 Google Drive API Setup
-To sync your Google AI Studio conversations directly from Google Drive:
-Go to the Google Cloud Console.
-Create a project and enable the Google Drive API.
-Configure the OAuth consent screen (add test users or publish the app).
-Create credentials for a Desktop Application and download the client_id and client_secret.
-Place your OAuth configuration at Documents/AI/oauth_config.json in the following format:
+The codebase is organized under `src/` by responsibility:
+
+```
+src/
+├── api/            # Network & data access layer
+│   ├── ConversationModel   # Parses raw Drive JSON into Conversation/Message objects, builds prompt/response pairs
+│   ├── CopilotApi          # Client for a local OpenAI-compatible completions server
+│   ├── DriveApi            # Google Drive v3 REST client (list, search, download conversations & attachments)
+│   └── LocalCache          # SQLite-backed local cache of downloaded conversations
+├── app/            # Application-level plumbing
+│   ├── Application         # QApplication subclass, holds QSettings
+│   ├── AuthManager          # Google OAuth 2.0 (loopback flow, token storage/refresh)
+│   └── Logger               # File + console logging singleton
+├── models/         # Plain data structures
+│   ├── Conversation         # A conversation: run settings, messages, and derived prompt/response pairs
+│   ├── FileAttachment       # Downloaded attachment metadata/content
+│   └── Message               # A single chunk (user/model turn), parsed from AI Studio JSON
+├── ui/             # Qt Widgets UI
+│   ├── ConversationListPane  # Left-hand list of conversations from Drive
+│   ├── FilePreviewWidget     # Preview pane for attachments
+│   ├── ImageViewerDialog     # Full-size image viewer
+│   ├── MainWindow            # Top-level window, wires together auth/API/UI
+│   ├── PromptListPane         # List of prompts within the open conversation
+│   ├── ResponsePane           # Renders a prompt/response pair (markdown, images, attachments)
+│   └── SearchDialog            # Debounced search dialog over Drive conversations
+└── main.cpp        # Entry point
+```
+
+### How a conversation loads
+
+1. `AuthManager` obtains/refreshes a Google OAuth access token (loopback HTTP server for the auth-code redirect).
+2. `DriveApi` locates the AI Studio conversations folder and lists/searches files in it.
+3. Conversation JSON is downloaded from Drive (or read from `LocalCache` if already cached).
+4. `ConversationModel::parseConversation` turns the raw `chunkedPrompt.chunks` array into a chronologically sorted list of `Message`s, then `buildPairs` groups them into `Conversation::PromptResponsePair`s (one user prompt → one or more model response chunks).
+5. `MainWindow`/`ConversationListPane`/`PromptListPane`/`ResponsePane` present the parsed conversation, with `ResponsePane` rendering markdown, inline images, and on-demand attachment downloads via `DriveApi`.
+
+## Requirements
+
+- Qt (Widgets, Network, Sql modules) — Qt 5.15+ or Qt 6.x
+- A C++17-capable compiler
+- SQLite driver for Qt (`QSQLITE`), typically bundled with Qt
+- A Google Cloud OAuth 2.0 **Desktop app** client (Client ID + Secret) with the `drive.readonly` scope enabled
+
+> Note: this dump does not include the project's build file (`CMakeLists.txt` / `.pro`). Add one that includes the `Widgets`, `Network`, and `Sql` Qt modules and compiles all sources under `src/`.
+
+## Configuration
+
+The app expects an OAuth client config file (Google's standard "installed app" credentials JSON), loaded via `AuthManager::loadConfig()`:
+
+```json
 {
   "installed": {
     "client_id": "YOUR_CLIENT_ID.apps.googleusercontent.com",
     "client_secret": "YOUR_CLIENT_SECRET"
   }
 }
-Alternatively, the application will prompt you for your Client ID and Client Secret on your first sign-in.
+```
 
-🖥️ Usage
-Sign In: Click "Sign In with Google" in the toolbar. A browser window will open to authorize access to your Google Drive (drive.readonly scope).
-Browse Conversations: Once authenticated, the app automatically finds your Google AI Studio folder in Drive and populates the conversation sidebar.
-View & Search: Select a conversation to view its prompt history. Use the Search tool to search across all archived conversations.
-Local Copilot Server Mode: Switch the backend dropdown to "Local Server (Copilot)" to chat directly with a local OpenAI-compatible endpoint (defaults to http://localhost:8000).
+By default the app requests the `https://www.googleapis.com/auth/drive.readonly` scope and performs the OAuth loopback flow on `127.0.0.1` (a random local port), matching a "Desktop app" OAuth client type in Google Cloud Console.
 
-📄 License
-Distributed under the MIT License. See LICENSE for more information.
+Tokens (access + refresh) are persisted via `QSettings` under the `GoogleAIViewer` organization/application name, and refreshed automatically on expiry or on `401` responses from Drive.
 
-👤 Author
-Your Name
-GitHub: @your-username
-LinkedIn: linkedin.com/in/your-profile
-Email: your.email@example.com
+## Building
+
+```bash
+mkdir build && cd build
+cmake ..
+cmake --build .
+```
+
+(Adjust to your actual build system if a qmake `.pro` file is used instead.)
+
+## Running
+
+1. Place your OAuth client credentials JSON somewhere accessible and point `AuthManager::loadConfig()` at it (or wire up `setCredentials()` with the client ID/secret directly).
+2. Launch the built binary. On first run, a browser window opens for Google sign-in; after granting access, the app receives the auth code via a local callback and stores tokens for future sessions.
+3. Once authenticated, the app locates your AI Studio conversations folder in Drive, lists conversations, and lets you open, search, and read them.
+
+Logs are written to `GoogleAIViewer.log` next to the application binary.
+
+## License
+
+Add your license of choice here.

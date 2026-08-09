@@ -5,12 +5,12 @@
 #include <QDir>
 
 int main(int argc, char *argv[])
-{  
+{
     Application app(argc, argv);
     app.init();
 
     QString logPath = QDir(QCoreApplication::applicationDirPath())
-        .filePath("GoogleAIViewer.log");
+                          .filePath("GoogleAIViewer.log");
     Logger::instance().init(logPath);
 
     MainWindow window;
@@ -18,6 +18,5 @@ int main(int argc, char *argv[])
     window.resize(1200, 800);
     window.show();
 
-    int ret = app.exec();
-    return ret;
+    return app.exec();
 }
