@@ -229,7 +229,7 @@ void DriveApi::downloadAttachment(const QString &fileId)
             });
 }
 
-void DriveApi::searchConversations(const QString &query)
+void DriveApi::searchConversations(const QString &query, bool includeAttachments)
 {
     if (m_folderId.isEmpty())
     {
@@ -237,22 +237,29 @@ void DriveApi::searchConversations(const QString &query)
         return;
     }
 
+    QString escapedFolder = escapeQueryValue(m_folderId);
+    QString escapedQuery = escapeQueryValue(query);
+
     QUrlQuery q;
-    q.addQueryItem("q", QString("'%1' in parents and fullText contains '%2' and trashed=false")
-                            .arg(escapeQueryValue(m_folderId), escapeQueryValue(query)));
+    q.addQueryItem("q", QString("'%1' in parents and (name contains '%2' or fullText contains '%2') and trashed=false")
+                            .arg(escapedFolder, escapedQuery));
     q.addQueryItem("fields", "files(id,name,modifiedTime,mimeType,fileExtension)");
     q.addQueryItem("pageSize", "100");
 
     QUrl url("https://www.googleapis.com/drive/v3/files");
     url.setQuery(q);
 
-    sendGet(url.toString(), [this](const QJsonObject &response)
+    sendGet(url.toString(), [this, includeAttachments](const QJsonObject &response)
             {
                 QList<DriveFile> results;
                 for (const auto &f : response["files"].toArray())
                 {
                     auto obj = f.toObject();
-                    if (isIgnoredAttachment(obj["mimeType"].toString(), obj["fileExtension"].toString().toLower()))
+                    QString mime = obj["mimeType"].toString();
+                    QString ext = obj["fileExtension"].toString().toLower();
+
+                    // Skip attachments ONLY if the user has not enabled "Search all attachments"
+                    if (!includeAttachments && isIgnoredAttachment(mime, ext))
                         continue;
 
                     DriveFile df;

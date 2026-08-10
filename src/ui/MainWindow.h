@@ -8,6 +8,7 @@
 #include <QComboBox>
 #include <QLineEdit>
 #include <QPushButton>
+#include <QCheckBox>
 #include <QWidget>
 #include <QHBoxLayout>
 #include <QTimer>
@@ -77,6 +78,7 @@ private:
     QComboBox *m_sortCombo;
     QComboBox *m_backendCombo;
     QLineEdit *m_searchInput;
+    QCheckBox *m_includeAttachmentsCheck;
     QTimer *m_searchTimer;
 
     QWidget *m_chatBar;

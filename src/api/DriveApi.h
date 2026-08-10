@@ -27,7 +27,7 @@ public:
     void listConversations(const QString &folderId);
     void downloadConversation(const QString &fileId, const QString &fileName);
     void downloadAttachment(const QString &fileId);
-    void searchConversations(const QString &query);
+    void searchConversations(const QString &query, bool includeAttachments = false);
 
     void retryPendingRequests();
 
@@ -46,8 +46,6 @@ private:
     {
         QString url;
         std::function<void(const QJsonObject &)> callback;
-        // true for binary media downloads (attachments); their callback
-        // re-issues the raw GET and must NOT be replayed through sendGet().
         bool binary = false;
     };
 

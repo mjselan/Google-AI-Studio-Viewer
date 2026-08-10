@@ -239,8 +239,18 @@ void MainWindow::setupToolbar()
     m_searchInput = new QLineEdit(this);
     m_searchInput->setPlaceholderText("Search conversations...");
     m_searchInput->setClearButtonEnabled(true);
-    m_searchInput->setMaximumWidth(220);
+    m_searchInput->setMaximumWidth(200);
     m_toolbar->addWidget(m_searchInput);
+
+    // "Search all attachments" Checkbox
+    m_includeAttachmentsCheck = new QCheckBox("Search all attachments", this);
+    m_includeAttachmentsCheck->setToolTip("Include text files, images, PDFs, and code attachments in search results");
+    m_toolbar->addWidget(m_includeAttachmentsCheck);
+
+    connect(m_includeAttachmentsCheck, &QCheckBox::toggled, this, [this](bool)
+            {
+                onSearchInputChanged();
+            });
 
     connect(m_searchInput, &QLineEdit::textChanged, this, [this](const QString &)
             {
@@ -285,8 +295,10 @@ void MainWindow::onSearchInputChanged()
     m_promptPane->setSearchTerm(query);
     m_responsePane->setSearchTerm(query);
 
-    m_drive->searchConversations(query);
+    bool includeAttachments = m_includeAttachmentsCheck->isChecked();
+    m_drive->searchConversations(query, includeAttachments);
 }
+
 
 void MainWindow::setupStatusBar()
 {
@@ -588,6 +600,26 @@ void MainWindow::onConversationSelected(int index)
         return;
     }
 
+    // Handle raw attachment files (e.g. con_out.txt, image.png) gracefully in ResponsePane
+    if (conv.messages.isEmpty() && !conv.fileId.isEmpty())
+    {
+        m_promptPane->clear();
+
+        Conversation::PromptResponsePair pair;
+        pair.prompt.text = conv.fileName;
+        pair.prompt.driveDocumentId = conv.fileId;
+
+        Conversation attConv = conv;
+        attConv.pairs.append(pair);
+        m_promptPane->setConversation(attConv);
+
+        bool showThoughts = m_toggleThoughts->isChecked();
+        m_responsePane->showResponse(pair, showThoughts, m_drive);
+
+        statusBar()->showMessage(QString("Attachment: %1").arg(conv.fileName));
+        return;
+    }
+
     m_promptPane->setConversation(conv);
     m_responsePane->clear();
 
@@ -601,17 +633,6 @@ void MainWindow::onConversationSelected(int index)
             .arg(conv.totalTokenCount()));
 }
 
-int MainWindow::indexForFileId() const
-{
-    if (m_selectedFileId.isEmpty())
-        return -1;
-    for (int i = 0; i < m_convPane->conversationCount(); ++i)
-    {
-        if (m_convPane->conversationAt(i).fileId == m_selectedFileId)
-            return i;
-    }
-    return -1;
-}
 
 void MainWindow::onPromptSelected(int pairIndex)
 {
@@ -658,4 +679,18 @@ void MainWindow::onSortChanged(int index)
 void MainWindow::loadConversation(const QString &fileId, const QString &fileName)
 {
     m_drive->downloadConversation(fileId, fileName);
+}
+
+int MainWindow::indexForFileId() const
+{
+    if (m_selectedFileId.isEmpty())
+        return -1;
+
+    for (int i = 0; i < m_convPane->conversationCount(); ++i)
+    {
+        if (m_convPane->conversationAt(i).fileId == m_selectedFileId)
+            return i;
+    }
+
+    return -1;
 }
