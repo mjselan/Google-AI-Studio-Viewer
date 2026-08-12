@@ -271,3 +271,7 @@ void DriveApi::searchConversations(const QString &query, bool includeAttachments
                 emit searchResultsReady(results);
             });
 }
+QString DriveFile::info()
+{
+    return "DriveFile info: " + fileId + ", " + fileName + ", " + modifiedTime.toUTC().toString(Qt::ISODate);
+}

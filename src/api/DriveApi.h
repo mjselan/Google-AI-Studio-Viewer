@@ -13,6 +13,7 @@ struct DriveFile
     QString fileId;
     QString fileName;
     QDateTime modifiedTime;
+    QString info();
 };
 
 class DriveApi : public QObject
