@@ -248,10 +248,13 @@ void DriveApi::searchConversations(const QString &query, bool includeAttachments
 
     QUrl url("https://www.googleapis.com/drive/v3/files");
     url.setQuery(q);
+    Logger::instance().info("DriveApi::searchConversations url" +  url.toString());
+
 
     sendGet(url.toString(), [this, includeAttachments](const QJsonObject &response)
             {
                 QList<DriveFile> results;
+                Logger::instance().info("Query results");
                 for (const auto &f : response["files"].toArray())
                 {
                     auto obj = f.toObject();
@@ -266,8 +269,10 @@ void DriveApi::searchConversations(const QString &query, bool includeAttachments
                     df.fileId = obj["id"].toString();
                     df.fileName = obj["name"].toString();
                     df.modifiedTime = QDateTime::fromString(obj["modifiedTime"].toString(), Qt::ISODate);
+                    Logger::instance().info(df.info());
                     results.append(df);
                 }
+                Logger::instance().info("End Query results");
                 emit searchResultsReady(results);
             });
 }

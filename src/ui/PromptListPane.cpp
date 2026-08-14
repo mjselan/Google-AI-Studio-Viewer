@@ -8,7 +8,6 @@
 #include <QRegularExpression>
 #include <QApplication>
 
-// Custom HTML delegate for QListWidget so bold tags <b> match Qt themes cleanly
 class HtmlDelegate : public QStyledItemDelegate
 {
 public:
@@ -29,14 +28,19 @@ public:
         doc.setDefaultFont(options.font);
 
         bool isSelected = (options.state & QStyle::State_Selected);
-        QColor textColor = options.palette.color(
-            isSelected ? QPalette::Active : QPalette::Normal,
-            isSelected ? QPalette::HighlightedText : QPalette::Text
-            );
+        bool hasFocus = (options.state & QStyle::State_HasFocus) || (options.state & QStyle::State_Active);
 
-        QString html = QString("<div style='color: %1;'>%2</div>")
-                           .arg(textColor.name(), options.text);
-        doc.setHtml(html);
+        QPalette::ColorGroup group = hasFocus ? QPalette::Active : QPalette::Inactive;
+        QColor textColor = options.palette.color(group, isSelected ? QPalette::HighlightedText : QPalette::Text);
+
+        // Fix for Windows inactive selection (light grey background where HighlightedText becomes invisible white):
+        if (isSelected && !hasFocus)
+        {
+            textColor = options.palette.color(QPalette::Inactive, QPalette::Text);
+        }
+
+        doc.setDefaultStyleSheet(QString("body, div, p { color: %1; }").arg(textColor.name()));
+        doc.setHtml(options.text);
 
         QRect textRect = style->subElementRect(QStyle::SE_ItemViewItemText, &options, options.widget);
         painter->translate(textRect.left() + 2, textRect.top() + 2);

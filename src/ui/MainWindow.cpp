@@ -142,7 +142,16 @@ MainWindow::MainWindow(QWidget *parent)
 
                 QSet<QString> matchingIds;
                 for (const auto &df : results)
+                {
                     matchingIds.insert(df.fileId);
+
+                    // Ensure all search results (including attachment files) are added to m_convPane so they can be displayed
+                    Conversation stub;
+                    stub.fileId = df.fileId;
+                    stub.fileName = df.fileName;
+                    stub.lastModified = df.modifiedTime;
+                    m_convPane->addConversation(stub);
+                }
 
                 for (const auto &conv : m_localConversations)
                 {
@@ -153,7 +162,7 @@ MainWindow::MainWindow(QWidget *parent)
                 m_convPane->setFilterFileIds(matchingIds);
 
                 statusBar()->showMessage(
-                    QString("Search for '%1': %2 matching conversation(s).")
+                    QString("Search for '%1': %2 matching item(s).")
                         .arg(m_activeSearchTerm)
                         .arg(matchingIds.size()));
 
