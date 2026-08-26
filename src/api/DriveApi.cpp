@@ -20,7 +20,7 @@ static QString escapeQueryValue(const QString &value)
     return escaped;
 }
 
-static bool isIgnoredAttachment(const QString &mime, const QString &ext)
+bool DriveApi::isIgnoredAttachment(const QString &mime, const QString &ext)
 {
     if (mime.startsWith("image/") || mime.startsWith("video/") ||
         mime.startsWith("audio/") || mime == "application/pdf" || mime == "text/csv")
@@ -105,6 +105,40 @@ void DriveApi::retryPendingRequests()
     }
 }
 
+void DriveApi::findParentConversation(const QString &attachmentFileId)
+{
+    if (m_folderId.isEmpty() || attachmentFileId.isEmpty())
+        return;
+
+    QString escapedFolder = escapeQueryValue(m_folderId);
+    // Use quotes around the ID for more precise full-text token matching
+    QString escapedId = escapeQueryValue(attachmentFileId);
+
+    QUrlQuery q;
+    q.addQueryItem("q", QString("'%1' in parents and fullText contains '%2' and trashed=false")
+                            .arg(escapedFolder, escapedId));
+    q.addQueryItem("fields", "files(id,name,modifiedTime,mimeType,fileExtension)");
+
+    QUrl url("https://www.googleapis.com/drive/v3/files");
+    url.setQuery(q);
+
+    sendGet(url.toString(), [this, attachmentFileId](const QJsonObject &response)
+            {
+                for (const auto &f : response["files"].toArray())
+                {
+                    DriveFile df(f.toObject());
+
+                    // If it's not the attachment itself and it's a JSON/Chat file
+                    if (df.fileId != attachmentFileId && !isIgnoredAttachment(df.mimeType, df.fileExtension))
+                    {
+                        emit parentConversationFound(attachmentFileId, df);
+                        return;
+                    }
+                }
+                emit parentConversationNotFound(attachmentFileId);
+            });
+}
+
 void DriveApi::findFolder(const QString &folderName)
 {
     QUrlQuery query;
@@ -145,14 +179,9 @@ void DriveApi::listConversations(const QString &folderId)
                 QList<DriveFile> files;
                 for (const auto &f : response["files"].toArray())
                 {
-                    auto obj = f.toObject();
-                    if (isIgnoredAttachment(obj["mimeType"].toString(), obj["fileExtension"].toString().toLower()))
+                    DriveFile df(f.toObject());
+                    if (isIgnoredAttachment(df.mimeType, df.fileExtension))
                         continue;
-
-                    DriveFile df;
-                    df.fileId = obj["id"].toString();
-                    df.fileName = obj["name"].toString();
-                    df.modifiedTime = QDateTime::fromString(obj["modifiedTime"].toString(), Qt::ISODate);
                     files.append(df);
                 }
                 emit conversationListReady(files);
@@ -254,29 +283,29 @@ void DriveApi::searchConversations(const QString &query, bool includeAttachments
     sendGet(url.toString(), [this, includeAttachments](const QJsonObject &response)
             {
                 QList<DriveFile> results;
-                Logger::instance().info("Query results");
                 for (const auto &f : response["files"].toArray())
                 {
-                    auto obj = f.toObject();
-                    QString mime = obj["mimeType"].toString();
-                    QString ext = obj["fileExtension"].toString().toLower();
+                    DriveFile df(f.toObject());
 
-                    // Skip attachments ONLY if the user has not enabled "Search all attachments"
-                    if (!includeAttachments && isIgnoredAttachment(mime, ext))
+                    if (!includeAttachments && isIgnoredAttachment(df.mimeType, df.fileExtension))
                         continue;
 
-                    DriveFile df;
-                    df.fileId = obj["id"].toString();
-                    df.fileName = obj["name"].toString();
-                    df.modifiedTime = QDateTime::fromString(obj["modifiedTime"].toString(), Qt::ISODate);
-                    Logger::instance().info(df.info());
                     results.append(df);
                 }
-                Logger::instance().info("End Query results");
                 emit searchResultsReady(results);
             });
 }
+DriveFile::DriveFile(const QJsonObject &obj)
+{
+    fileId = obj["id"].toString();
+    fileName = obj["name"].toString();
+    modifiedTime = QDateTime::fromString(obj["modifiedTime"].toString(), Qt::ISODate);
+    mimeType = obj["mimeType"].toString();
+    fileExtension = obj["fileExtension"].toString().toLower();
+}
+
 QString DriveFile::info()
 {
-    return "DriveFile info: " + fileId + ", " + fileName + ", " + modifiedTime.toUTC().toString(Qt::ISODate);
+    return QString("DriveFile: %1 (%2) ID: %3 Mod: %4")
+    .arg(fileName, mimeType, fileId, modifiedTime.toString(Qt::ISODate));
 }

@@ -95,4 +95,5 @@ private:
     int m_currentLocalConvIndex = -1;
     QString m_currentConversationId;
     bool m_waitingForResponse = false;
+    QSet<QString> m_matchingFileIds; // Track IDs that pass the current search filter
 };

@@ -135,50 +135,68 @@ MainWindow::MainWindow(QWidget *parent)
     connect(m_copilot, &CopilotApi::responseReceived, this, &MainWindow::onCopilotResponse);
     connect(m_copilot, &CopilotApi::errorOccurred, this, &MainWindow::onCopilotError);
 
-    connect(m_drive, &DriveApi::searchResultsReady, this, [this](const QList<DriveFile> &results)
-            {
-                if (m_activeSearchTerm.isEmpty())
-                    return;
-
-                QSet<QString> matchingIds;
-                for (const auto &df : results)
-                {
-                    matchingIds.insert(df.fileId);
-
-                    // Ensure all search results (including attachment files) are added to m_convPane so they can be displayed
-                    Conversation stub;
-                    stub.fileId = df.fileId;
-                    stub.fileName = df.fileName;
-                    stub.lastModified = df.modifiedTime;
-                    m_convPane->addConversation(stub);
-                }
-
-                for (const auto &conv : m_localConversations)
-                {
-                    if (conv.displayTitle().contains(m_activeSearchTerm, Qt::CaseInsensitive))
-                        matchingIds.insert(conv.fileId);
-                }
-
-                m_convPane->setFilterFileIds(matchingIds);
-
-                statusBar()->showMessage(
-                    QString("Search for '%1': %2 matching item(s).")
-                        .arg(m_activeSearchTerm)
-                        .arg(matchingIds.size()));
-
-                if (m_convPane->conversationCount() > 0)
-                {
-                    onConversationSelected(0);
-                }
-                else
-                {
-                    m_promptPane->clear();
-                    m_responsePane->clear();
-                }
-            });
-
     connect(m_sendButton, &QPushButton::clicked, this, &MainWindow::onSendPrompt);
     connect(m_chatInput, &QLineEdit::returnPressed, this, &MainWindow::onSendPrompt);
+    // This handles the "cloud lookup" when an attachment hit is found
+    connect(m_drive, &DriveApi::parentConversationFound, this, [this](const QString &attId, const DriveFile &parent)
+            {
+                // Convert the parent DriveFile into a Conversation stub
+                Conversation parentConv;
+                parentConv.fileId = parent.fileId;
+                parentConv.fileName = parent.fileName;
+                parentConv.lastModified = parent.modifiedTime;
+
+                // Add the parent to the pane
+                m_convPane->addConversation(parentConv);
+
+                // Ensure the parent ID is allowed through the search filter
+                m_matchingFileIds.insert(parent.fileId);
+                m_convPane->setFilterFileIds(m_matchingFileIds);
+            });
+    // Update the search results handler:
+    // This handles the primary search results
+    connect(m_drive, &DriveApi::searchResultsReady, this, [this](const QList<DriveFile> &results)
+            {
+                if (m_activeSearchTerm.isEmpty()) return;
+
+                // Reset the filter set for the new search
+                m_matchingFileIds.clear();
+
+                for (const auto &df : results)
+                {
+                    // Check if this file is an attachment (Image, PDF, etc.)
+                    if (DriveApi::isIgnoredAttachment(df.mimeType, df.fileExtension))
+                    {
+                        // IT IS AN ATTACHMENT:
+                        // Do NOT add it to m_convPane. Instead, find its owner.
+                        m_drive->findParentConversation(df.fileId);
+                    }
+                    else
+                    {
+                        // IT IS A CONVERSATION:
+                        // Add the ID to the filter and add the stub to the pane.
+                        m_matchingFileIds.insert(df.fileId);
+
+                        Conversation stub;
+                        stub.fileId = df.fileId;
+                        stub.fileName = df.fileName;
+                        stub.lastModified = df.modifiedTime;
+                        m_convPane->addConversation(stub);
+                    }
+                }
+
+                // Add local Copilot matches to the filter as well
+                for (const auto &conv : m_localConversations) {
+                    if (conv.displayTitle().contains(m_activeSearchTerm, Qt::CaseInsensitive))
+                        m_matchingFileIds.insert(conv.fileId);
+                }
+
+                // Update the UI list to only show the allowed IDs
+                m_convPane->setFilterFileIds(m_matchingFileIds);
+
+                statusBar()->showMessage(QString("Search for '%1' found %2 primary matches.")
+                                             .arg(m_activeSearchTerm).arg(m_matchingFileIds.size()));
+            });
 }
 
 MainWindow::~MainWindow() {}

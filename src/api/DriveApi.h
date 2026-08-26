@@ -8,11 +8,21 @@
 #include <QDateTime>
 #include <functional>
 
+
 struct DriveFile
 {
     QString fileId;
     QString fileName;
     QDateTime modifiedTime;
+    QString mimeType;
+    QString fileExtension;
+
+    // Default constructor for empty stubs
+    DriveFile() = default;
+
+    // Constructor to parse from API response
+    explicit DriveFile(const QJsonObject &obj);
+
     QString info();
 };
 
@@ -29,8 +39,9 @@ public:
     void downloadConversation(const QString &fileId, const QString &fileName);
     void downloadAttachment(const QString &fileId);
     void searchConversations(const QString &query, bool includeAttachments = false);
-
     void retryPendingRequests();
+    static bool isIgnoredAttachment(const QString &mime, const QString &ext);
+    void findParentConversation(const QString &attachmentFileId);
 
 signals:
     void folderFound(const QString &folderId);
@@ -41,6 +52,8 @@ signals:
     void attachmentDownloaded(const QString &fileId, const QByteArray &data, const QString &mimeType);
     void apiError(const QString &error);
     void tokenNeedsRefresh();
+    void parentConversationFound(const QString &attachmentId, const DriveFile &parent);
+    void parentConversationNotFound(const QString &attachmentId);
 
 private:
     struct PendingRequest

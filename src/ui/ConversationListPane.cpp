@@ -72,18 +72,24 @@ void ConversationListPane::setFileList(const QList<DriveFile> &files)
 
 void ConversationListPane::addConversation(const Conversation &conv)
 {
+    bool found = false;
     for (int i = 0; i < m_conversations.size(); ++i)
     {
         if (m_conversations[i].fileId == conv.fileId)
         {
+            // Update existing (e.g. replacing a stub with full data)
             m_conversations[i] = conv;
-            refreshList();
-            return;
+            found = true;
+            break;
         }
     }
 
-    m_conversations.append(conv);
-    m_filesPopulated++;
+    if (!found) {
+        m_conversations.append(conv);
+    }
+
+    // If we are in search mode and this is a new parent found via attachment,
+    // it will be shown only if it's added to m_filterFileIds via setFilterFileIds
     refreshList();
 }
 
