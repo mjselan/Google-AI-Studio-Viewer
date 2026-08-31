@@ -20,24 +20,46 @@ static QString escapeQueryValue(const QString &value)
     return escaped;
 }
 
-bool DriveApi::isIgnoredAttachment(const QString &mime, const QString &ext)
+
+// File: src\api\DriveApi.cpp
+
+bool DriveApi::isConversationFile(const QString &fileName, const QString &mime, const QString &ext)
 {
-    if (mime.startsWith("image/") || mime.startsWith("video/") ||
-        mime.startsWith("audio/") || mime == "application/pdf" || mime == "text/csv")
-    {
-        return true;
+    // 1. Must be a JSON
+    if (ext != "json" && mime != "application/json") {
+        return false;
     }
 
-    if (!ext.isEmpty())
-    {
-        static const QStringList attachmentExts = {
-            "json", "txt", "pdf", "csv", "md", "png", "jpg", "jpeg",
-            "mp3", "mp4", "wav", "py", "cpp", "h", "js", "html", "log", "cfg"
-        };
-        if (attachmentExts.contains(ext))
-            return true;
+    // 2. Ignore hidden files
+    if (fileName.startsWith('.')) {
+        Logger::instance().debug("Filter: Ignored hidden file: " + fileName);
+        return false;
     }
-    return false;
+
+    // 3. Ignore technical files with multiple dots (e.g. aider.conf.json)
+    if (fileName.count('.') > 1) {
+        Logger::instance().debug("Filter: Ignored multi-dot file: " + fileName);
+        return false;
+    }
+
+    // 4. Expanded Blacklist based on your screenshots
+    static const QStringList blacklist = {
+        "plan", "history", "config", "settings", "metadata",
+        "manifest", "lock", "package", "state", "credentials",
+        "launch", "project", "tasks", "vscode", "tsconfig",
+        "cmake", "presets", "composer", "history"
+    };
+
+    QString lowerName = fileName.toLower();
+    for (const QString &word : blacklist) {
+        if (lowerName.contains(word)) {
+            Logger::instance().debug(QString("Filter: Ignored blacklist match '%1': %2").arg(word, fileName));
+            return false;
+        }
+    }
+
+    Logger::instance().info("Filter: File passed as potential conversation: " + fileName);
+    return true;
 }
 
 void DriveApi::setAccessToken(const QString &token)
@@ -128,8 +150,9 @@ void DriveApi::findParentConversation(const QString &attachmentFileId)
                 {
                     DriveFile df(f.toObject());
 
-                    // If it's not the attachment itself and it's a JSON/Chat file
-                    if (df.fileId != attachmentFileId && !isIgnoredAttachment(df.mimeType, df.fileExtension))
+                    // The parent MUST be a conversation file (JSON)
+                    // and NOT the attachment itself.
+                    if (df.fileId != attachmentFileId && isConversationFile(df.fileName, df.mimeType, df.fileExtension))
                     {
                         emit parentConversationFound(attachmentFileId, df);
                         return;
@@ -173,16 +196,15 @@ void DriveApi::listConversations(const QString &folderId)
 
     QUrl url("https://www.googleapis.com/drive/v3/files");
     url.setQuery(query);
-
     sendGet(url.toString(), [this](const QJsonObject &response)
             {
                 QList<DriveFile> files;
                 for (const auto &f : response["files"].toArray())
                 {
                     DriveFile df(f.toObject());
-                    if (isIgnoredAttachment(df.mimeType, df.fileExtension))
-                        continue;
-                    files.append(df);
+                    // ONLY list files that are conversations (JSONs)
+                    if (isConversationFile(df.fileName, df.mimeType, df.fileExtension))
+                        files.append(df);
                 }
                 emit conversationListReady(files);
             });
@@ -287,9 +309,15 @@ void DriveApi::searchConversations(const QString &query, bool includeAttachments
                 {
                     DriveFile df(f.toObject());
 
-                    if (!includeAttachments && isIgnoredAttachment(df.mimeType, df.fileExtension))
+                    // LOGIC CHANGE:
+                    // If the user does NOT want attachments, and this file is NOT a conversation (JSON), skip it.
+                    if (!includeAttachments && !isConversationFile(df.fileName, df.mimeType, df.fileExtension)) {
                         continue;
+                    }
 
+                    // Otherwise, we keep it.
+                    // If includeAttachments is true, we pass everything to MainWindow,
+                    // which then decides whether to show it immediately or lookup a parent.
                     results.append(df);
                 }
                 emit searchResultsReady(results);

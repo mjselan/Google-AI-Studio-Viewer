@@ -40,9 +40,9 @@ public:
     void downloadAttachment(const QString &fileId);
     void searchConversations(const QString &query, bool includeAttachments = false);
     void retryPendingRequests();
-    static bool isIgnoredAttachment(const QString &mime, const QString &ext);
     void findParentConversation(const QString &attachmentFileId);
 
+    static bool isConversationFile(const QString &fileName, const QString &mime, const QString &ext);
 signals:
     void folderFound(const QString &folderId);
     void folderNotFound();

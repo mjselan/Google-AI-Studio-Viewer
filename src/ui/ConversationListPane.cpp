@@ -1,4 +1,5 @@
 #include "ConversationListPane.h"
+#include "app/Logger.h"
 #include "api/DriveApi.h"
 #include <QVBoxLayout>
 #include <QLabel>
@@ -57,6 +58,7 @@ bool ConversationListPane::isValidConv(const Conversation &conv) const
 
 void ConversationListPane::setFileList(const QList<DriveFile> &files)
 {
+    Logger::instance().info(QString("Pane: setFileList called with %1 files").arg(files.size()));
     m_fileList = files;
     m_conversations.clear();
     for (const auto &f : files)
@@ -72,6 +74,7 @@ void ConversationListPane::setFileList(const QList<DriveFile> &files)
 
 void ConversationListPane::addConversation(const Conversation &conv)
 {
+    Logger::instance().debug("Pane: addConversation called for: " + conv.fileName);
     bool found = false;
     for (int i = 0; i < m_conversations.size(); ++i)
     {
@@ -245,6 +248,19 @@ void ConversationListPane::selectByFileId(const QString &fileId)
             m_list->blockSignals(false);
             emit conversationSelected(convIdx);
             return;
+        }
+    }
+}
+
+// File: src\ui\ConversationListPane.cpp
+void ConversationListPane::removeConversation(const QString &fileId)
+{
+    Logger::instance().info("Pane: removeConversation called for ID: " + fileId);
+    for (int i = 0; i < m_conversations.size(); ++i) {
+        if (m_conversations[i].fileId == fileId) {
+            m_conversations.removeAt(i);
+            refreshList();
+            break;
         }
     }
 }

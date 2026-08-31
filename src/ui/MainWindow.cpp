@@ -67,9 +67,29 @@ MainWindow::MainWindow(QWidget *parent)
                 statusBar()->showMessage("'Google AI Studio' folder not found in Drive");
             });
     connect(m_drive, &DriveApi::conversationListReady, this, &MainWindow::onConversationsLoaded);
+    // File: src\ui\MainWindow.cpp
+
     connect(m_drive, &DriveApi::conversationDownloaded, this,
             [this](const QString &fileId, const QString &fileName, const QJsonObject &data)
             {
+                // --- NEW CONTENT GUARD ---
+                // Check if the JSON is a real AI Studio chat or just a random JSON file
+                if (!ConversationModel::isLikelyConversation(data))
+                {
+                    Logger::instance().warn("Guard: File failed content check (no runSettings): " + fileName);
+
+                    // 1. Remove from the Sidebar
+                    m_convPane->removeConversation(fileId);
+
+                    // 2. If we are currently searching, remove it from search results too
+                    if (m_matchingFileIds.contains(fileId)) {
+                        m_matchingFileIds.remove(fileId);
+                        m_convPane->setFilterFileIds(m_matchingFileIds);
+                    }
+                    return; // Stop processing this file
+                }
+                Logger::instance().info("Guard: File passed content check: " + fileName);
+                // --- EXISTING LOGIC (Only runs if JSON is valid) ---
                 QDateTime modTime;
                 for (const auto &f : m_conversationFiles)
                 {
@@ -157,6 +177,7 @@ MainWindow::MainWindow(QWidget *parent)
     // This handles the primary search results
     connect(m_drive, &DriveApi::searchResultsReady, this, [this](const QList<DriveFile> &results)
             {
+                Logger::instance().info(QString("Search: resultsReady with %1 hits").arg(results.size()));
                 if (m_activeSearchTerm.isEmpty()) return;
 
                 // Reset the filter set for the new search
@@ -164,17 +185,11 @@ MainWindow::MainWindow(QWidget *parent)
 
                 for (const auto &df : results)
                 {
-                    // Check if this file is an attachment (Image, PDF, etc.)
-                    if (DriveApi::isIgnoredAttachment(df.mimeType, df.fileExtension))
+                    // POSITIVE HIT: This is a JSON, treat it as a conversation.
+                    if (DriveApi::isConversationFile(df.fileName, df.mimeType, df.fileExtension))
                     {
                         // IT IS AN ATTACHMENT:
                         // Do NOT add it to m_convPane. Instead, find its owner.
-                        m_drive->findParentConversation(df.fileId);
-                    }
-                    else
-                    {
-                        // IT IS A CONVERSATION:
-                        // Add the ID to the filter and add the stub to the pane.
                         m_matchingFileIds.insert(df.fileId);
 
                         Conversation stub;
@@ -182,6 +197,12 @@ MainWindow::MainWindow(QWidget *parent)
                         stub.fileName = df.fileName;
                         stub.lastModified = df.modifiedTime;
                         m_convPane->addConversation(stub);
+                    }
+                    else
+                    {
+                        // ATTACHMENT: This is a PNG, PDF, CPP, etc.
+                        // Go find the JSON that owns it.
+                        m_drive->findParentConversation(df.fileId);
                     }
                 }
 
@@ -566,12 +587,13 @@ void MainWindow::onFolderFound(const QString &folderId)
     m_drive->listConversations(folderId);
 }
 
+
+
 void MainWindow::onConversationsLoaded(const QList<DriveFile> &files)
 {
     m_conversationFiles = files;
-
-    statusBar()->showMessage(QString("Found %1 conversations.")
-                                 .arg(files.size()));
+    statusBar()->showMessage(QString("Found %1 potential conversations.").arg(files.size()));
+    Logger::instance().info(QString("DriveApi returned %1 potential conversation files.").arg(files.size()));
 
     m_convPane->clear();
     m_convPane->setFileList(files);
@@ -584,8 +606,18 @@ void MainWindow::onConversationsLoaded(const QList<DriveFile> &files)
             QJsonObject data = m_cache.loadConversation(f.fileId);
             if (!data.isEmpty())
             {
-                Conversation parsed = m_convModel->parseConversation(f.fileId, f.fileName, data);
-                m_convPane->addConversation(parsed);
+                // --- ADDED GUARD HERE ---
+                // Only add to the list if the cached data is actually a conversation
+                if (ConversationModel::isLikelyConversation(data))
+                {
+                    Conversation parsed = m_convModel->parseConversation(f.fileId, f.fileName, data);
+                    m_convPane->addConversation(parsed);
+                }
+                else
+                {
+                    // If cached data is junk, remove the stub immediately
+                    m_convPane->removeConversation(f.fileId);
+                }
             }
         }
     }

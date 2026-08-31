@@ -13,6 +13,7 @@ public:
 
     Conversation parseConversation(const QString &fileId, const QString &fileName,
                                    const QJsonObject &root) const;
+    static bool isLikelyConversation(const QJsonObject &root);
 
 private:
     void buildPairs(Conversation &conv) const;

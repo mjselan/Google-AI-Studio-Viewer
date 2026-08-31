@@ -27,6 +27,7 @@ public:
 
     void sortBy(SortMode mode);
     void selectByFileId(const QString &fileId);
+    void removeConversation(const QString &fileId);
 
 signals:
     void conversationSelected(int index);

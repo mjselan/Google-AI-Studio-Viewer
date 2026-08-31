@@ -44,6 +44,13 @@ Conversation ConversationModel::parseConversation(const QString &fileId,
     return conv;
 }
 
+bool ConversationModel::isLikelyConversation(const QJsonObject &root)
+{
+    // Google AI Studio chat logs ALWAYS have a "runSettings" object
+    // and usually a "chunkedPrompt" or "systemInstruction"
+    return root.contains("runSettings") && root["runSettings"].isObject();
+}
+
 void ConversationModel::buildPairs(Conversation &conv) const
 {
     conv.pairs.clear();
