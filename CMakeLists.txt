@@ -53,6 +53,7 @@ qt_add_executable(${PROJECT_NAME}
     MANUAL_FINALIZATION
     ${SOURCES}
     ${HEADERS}
+    src/api/conversationsyncmanager.h src/api/conversationsyncmanager.cpp
 )
 
 if(WIN32)

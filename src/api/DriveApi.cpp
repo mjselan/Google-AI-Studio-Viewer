@@ -21,45 +21,29 @@ static QString escapeQueryValue(const QString &value)
 }
 
 
-// File: src\api\DriveApi.cpp
-
 bool DriveApi::isConversationFile(const QString &fileName, const QString &mime, const QString &ext)
 {
-    // 1. Must be a JSON
-    if (ext != "json" && mime != "application/json") {
-        return false;
+    // Rule 1: Gold Standard - Makersuite/AI Studio MIME type
+    if (mime == "application/vnd.google-makersuite.prompt" ||
+        mime == "application/vnd.google-gemini.conversation") {
+        return true;
     }
 
-    // 2. Ignore hidden files
-    if (fileName.startsWith('.')) {
-        Logger::instance().debug("Filter: Ignored hidden file: " + fileName);
-        return false;
-    }
+    // Rule 2: Secondary Standard - If it has the AI Studio extension (if applicable)
+    // Some versions use .jsc or no extension.
 
-    // 3. Ignore technical files with multiple dots (e.g. aider.conf.json)
-    if (fileName.count('.') > 1) {
-        Logger::instance().debug("Filter: Ignored multi-dot file: " + fileName);
-        return false;
-    }
-
-    // 4. Expanded Blacklist based on your screenshots
-    static const QStringList blacklist = {
-        "plan", "history", "config", "settings", "metadata",
-        "manifest", "lock", "package", "state", "credentials",
-        "launch", "project", "tasks", "vscode", "tsconfig",
-        "cmake", "presets", "composer", "history"
-    };
-
-    QString lowerName = fileName.toLower();
-    for (const QString &word : blacklist) {
-        if (lowerName.contains(word)) {
-            Logger::instance().debug(QString("Filter: Ignored blacklist match '%1': %2").arg(word, fileName));
-            return false;
+    // Rule 3: Fail-safe for standard JSON files
+    if (mime == "application/json" || ext == "json") {
+        // Only exclude if it looks like a config/system file
+        static const QStringList systemFiles = { "launch", "settings", "presets", "package" };
+        for (const QString &word : systemFiles) {
+            if (fileName.contains(word, Qt::CaseInsensitive)) return false;
         }
+        // If it's a generic JSON, give it a chance
+        return true;
     }
 
-    Logger::instance().info("Filter: File passed as potential conversation: " + fileName);
-    return true;
+    return false;
 }
 
 void DriveApi::setAccessToken(const QString &token)

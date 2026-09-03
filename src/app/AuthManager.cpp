@@ -1,5 +1,6 @@
 #include "AuthManager.h"
 #include "Application.h"
+#include "Logger.h"
 #include <QDesktopServices>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -98,19 +99,14 @@ void AuthManager::authenticate()
 
     if (!m_accessToken.isEmpty())
     {
-        int remainingSec = m_expiresIn;
-        if (m_tokenAcquiredAt.isValid())
-        {
-            qint64 elapsedSec = m_tokenAcquiredAt.secsTo(QDateTime::currentDateTimeUtc());
-            remainingSec = m_expiresIn - static_cast<int>(elapsedSec);
-        }
-        emit authSuccess(formatExpiryMessage("Authenticated.", remainingSec));
+        emit authSuccess("Signed in.");
         return;
     }
 
     if (!m_refreshToken.isEmpty())
     {
-        refreshAccessToken();
+        // Treat as initial sign-in via saved refresh token
+        refreshAccessToken(true);
         return;
     }
 
@@ -226,13 +222,21 @@ void AuthManager::submitAuthCode(const QString &code)
     exchangeCodeForTokens(code);
 }
 
-void AuthManager::refreshAccessToken()
+void AuthManager::refreshAccessToken(bool isInitialLogin)
 {
+    if (m_isRefreshing)
+    {
+        Logger::instance().info("Token refresh already in progress, skipping duplicate request.");
+        return;
+    }
+
     if (m_refreshToken.isEmpty())
     {
         emit authFailed("No refresh token available");
         return;
     }
+
+    m_isRefreshing = true;
 
     QUrl url("https://oauth2.googleapis.com/token");
     QNetworkRequest req(url);
@@ -246,27 +250,47 @@ void AuthManager::refreshAccessToken()
     body.addQueryItem("grant_type", "refresh_token");
 
     auto *reply = m_net->post(req, body.toString(QUrl::FullyEncoded).toUtf8());
-    connect(reply, &QNetworkReply::finished, this, [this, reply]()
+    connect(reply, &QNetworkReply::finished, this, [this, reply, isInitialLogin]()
             {
                 reply->deleteLater();
+                m_isRefreshing = false;
+
                 auto responseBody = reply->readAll();
                 if (reply->error() != QNetworkReply::NoError)
                 {
-                    signOut();
-                    QString errMsg = "Token refresh failed: " + reply->errorString();
                     auto doc = QJsonDocument::fromJson(responseBody);
-                    if (!doc.isNull() && doc.object().contains("error"))
-                        errMsg += "\n" + doc.object()["error_description"].toString();
-                    emit authFailed(errMsg);
+                    QString oauthError = doc.object()["error"].toString();
+
+                    // Only revoke credentials if Google explicitly rejects the refresh token (e.g. invalid_grant)
+                    // If it was just a network timeout/offline error, keep the tokens so it can retry later.
+                    if (oauthError == "invalid_grant" || oauthError == "unauthorized_client")
+                    {
+                        signOut();
+                        emit authFailed("Session expired. Please sign in again.");
+                    }
+                    else
+                    {
+                        emit authFailed("Network error refreshing token: " + reply->errorString());
+                    }
                     return;
                 }
+
                 auto doc = QJsonDocument::fromJson(responseBody);
                 auto obj = doc.object();
                 QString access = obj["access_token"].toString();
                 int expiresIn = obj["expires_in"].toInt();
                 storeTokens(access, QString(), expiresIn);
+
+                Logger::instance().info(QString("OAuth token renewed. Valid for %1 seconds.").arg(expiresIn));
+
+                // Always notify services (DriveApi, SyncMgr) that new token is ready
                 emit tokenRefreshed();
-                emit authSuccess(formatExpiryMessage("Token refreshed.", expiresIn));
+
+                // ONLY notify UI to do full startup/folder listing on initial login!
+                if (isInitialLogin)
+                {
+                    emit authSuccess("Signed in to Google AI Studio.");
+                }
             });
 }
 

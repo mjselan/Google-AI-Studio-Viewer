@@ -7,6 +7,7 @@
 #include "api/CopilotApi.h"
 #include "api/ConversationModel.h"
 #include "api/LocalCache.h"
+#include "api/ConversationSyncManager.h"
 #include "models/Conversation.h"
 #include "app/Logger.h"
 #include <QMessageBox>
@@ -42,6 +43,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     m_searchTimer->setSingleShot(true);
     m_searchTimer->setInterval(400);
+    m_syncMgr = new ConversationSyncManager(&m_cache, m_convModel, this);
 
     connect(m_auth, &AuthManager::authSuccess, this, [this](const QString &message)
             {
@@ -50,6 +52,7 @@ MainWindow::MainWindow(QWidget *parent)
                 m_signInAction->setVisible(false);
                 m_signOutAction->setVisible(true);
                 statusBar()->showMessage(message);
+                m_syncMgr->setAccessToken(m_auth->accessToken());
             });
 
     connect(m_auth, &AuthManager::authFailed, this, [this](const QString &err)
@@ -118,17 +121,18 @@ MainWindow::MainWindow(QWidget *parent)
 
     connect(m_drive, &DriveApi::tokenNeedsRefresh, this, [this]()
             {
-                statusBar()->showMessage("Token expired. Refreshing...");
-                m_auth->refreshAccessToken();
+                m_auth->refreshAccessToken(false); // false = silent background refresh
             });
 
     connect(m_auth, &AuthManager::tokenRefreshed, this, [this]()
             {
                 m_drive->setAccessToken(m_auth->accessToken());
+                m_syncMgr->setAccessToken(m_auth->accessToken());
                 m_drive->retryPendingRequests();
-                statusBar()->showMessage("Token refreshed. Continuing...");
-            });
 
+                // Show a brief, non-intrusive 2-second status message without resetting the view
+                statusBar()->showMessage("Session renewed.", 2000);
+            });
     connect(m_convPane, &ConversationListPane::conversationSelected,
             this, &MainWindow::onConversationSelected);
     connect(m_convPane, &ConversationListPane::refreshRequested, this,
@@ -177,46 +181,90 @@ MainWindow::MainWindow(QWidget *parent)
     // This handles the primary search results
     connect(m_drive, &DriveApi::searchResultsReady, this, [this](const QList<DriveFile> &results)
             {
-                Logger::instance().info(QString("Search: resultsReady with %1 hits").arg(results.size()));
                 if (m_activeSearchTerm.isEmpty()) return;
-
-                // Reset the filter set for the new search
-                m_matchingFileIds.clear();
 
                 for (const auto &df : results)
                 {
-                    // POSITIVE HIT: This is a JSON, treat it as a conversation.
                     if (DriveApi::isConversationFile(df.fileName, df.mimeType, df.fileExtension))
                     {
-                        // IT IS AN ATTACHMENT:
-                        // Do NOT add it to m_convPane. Instead, find its owner.
                         m_matchingFileIds.insert(df.fileId);
-
-                        Conversation stub;
-                        stub.fileId = df.fileId;
-                        stub.fileName = df.fileName;
-                        stub.lastModified = df.modifiedTime;
-                        m_convPane->addConversation(stub);
                     }
                     else
                     {
-                        // ATTACHMENT: This is a PNG, PDF, CPP, etc.
-                        // Go find the JSON that owns it.
-                        m_drive->findParentConversation(df.fileId);
+                        // Attachment match from Google Drive (e.g. con_out.txt, MainWindow.cpp, image.png)
+                        // 1. Look up parent conversation(s) referencing this attachment in local cache
+                        QSet<QString> parentIds = m_cache.findConversationsByAttachmentId(df.fileId);
+                        if (!parentIds.isEmpty())
+                        {
+                            for (const QString &pid : parentIds)
+                            {
+                                ensureConversationInPane(pid);
+                                m_matchingFileIds.insert(pid);
+                            }
+                        }
+                        else
+                        {
+                            // 2. Fallback to Drive parent lookup if not yet cached
+                            m_drive->findParentConversation(df.fileId);
+                        }
                     }
                 }
 
-                // Add local Copilot matches to the filter as well
-                for (const auto &conv : m_localConversations) {
-                    if (conv.displayTitle().contains(m_activeSearchTerm, Qt::CaseInsensitive))
-                        m_matchingFileIds.insert(conv.fileId);
-                }
-
-                // Update the UI list to only show the allowed IDs
                 m_convPane->setFilterFileIds(m_matchingFileIds);
+                statusBar()->showMessage(QString("Search complete: %1 matching conversation%2 for '%3'.")
+                                             .arg(m_matchingFileIds.size())
+                                             .arg(m_matchingFileIds.size() == 1 ? "" : "s")
+                                             .arg(m_activeSearchTerm));
+            });
+    // Connect Sync Manager Signals
+    connect(m_syncMgr, &ConversationSyncManager::syncProgress, this,
+            [this](int completed, int total, const QString &fileName)
+            {
+                statusBar()->showMessage(QString("Syncing: %1/%2 (%3)")
+                                             .arg(completed)
+                                             .arg(total)
+                                             .arg(fileName));
+            });
 
-                statusBar()->showMessage(QString("Search for '%1' found %2 primary matches.")
-                                             .arg(m_activeSearchTerm).arg(m_matchingFileIds.size()));
+    connect(m_syncMgr, &ConversationSyncManager::conversationSynced, this,
+            [this](const Conversation &conv)
+            {
+                m_convPane->addConversation(conv);
+
+                // If a search is currently active, check if this incoming conversation matches
+                if (!m_activeSearchTerm.isEmpty())
+                {
+                    bool match = conv.displayTitle().contains(m_activeSearchTerm, Qt::CaseInsensitive);
+                    if (!match)
+                    {
+                        for (const auto &msg : conv.messages)
+                        {
+                            if (msg.text.contains(m_activeSearchTerm, Qt::CaseInsensitive))
+                            {
+                                match = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (match)
+                    {
+                        m_matchingFileIds.insert(conv.fileId);
+                        m_convPane->setFilterFileIds(m_matchingFileIds);
+                    }
+                }
+            });
+
+    connect(m_syncMgr, &ConversationSyncManager::syncFinished, this,
+            [this](int downloaded, int upToDate)
+            {
+                statusBar()->showMessage(QString("Sync complete. %1 updated, %2 up to date.")
+                                             .arg(downloaded).arg(upToDate));
+            });
+
+    connect(m_syncMgr, &ConversationSyncManager::tokenNeedsRefresh, this,
+            [this]()
+            {
+                m_auth->refreshAccessToken(false); // false = silent background refresh
             });
 }
 
@@ -329,6 +377,7 @@ void MainWindow::onSearchInputChanged()
 
     if (query.isEmpty())
     {
+        m_matchingFileIds.clear();
         m_convPane->clearFilter();
         m_promptPane->setSearchTerm(QString());
         m_responsePane->setSearchTerm(QString());
@@ -339,10 +388,48 @@ void MainWindow::onSearchInputChanged()
     if (query.length() < 2)
         return;
 
-    statusBar()->showMessage(QString("Searching for '%1'...").arg(query));
     m_promptPane->setSearchTerm(query);
     m_responsePane->setSearchTerm(query);
 
+    m_matchingFileIds.clear();
+
+    // 1. INSTANT LOCAL SEARCH (SQLite Cache: Prompts, Responses, Thoughts, Titles)
+    QSet<QString> localMatches = m_cache.searchContent(query);
+    for (const QString &fid : localMatches)
+    {
+        ensureConversationInPane(fid);
+        m_matchingFileIds.insert(fid);
+    }
+
+    // 2. SEARCH LOCAL COPILOT CHATS
+    for (const auto &conv : m_localConversations)
+    {
+        bool match = conv.displayTitle().contains(query, Qt::CaseInsensitive);
+        if (!match)
+        {
+            for (const auto &msg : conv.messages)
+            {
+                if (msg.text.contains(query, Qt::CaseInsensitive))
+                {
+                    match = true;
+                    break;
+                }
+            }
+        }
+        if (match)
+        {
+            m_matchingFileIds.insert(conv.fileId);
+        }
+    }
+
+    // Apply immediate local filter results to the pane
+    m_convPane->setFilterFileIds(m_matchingFileIds);
+    statusBar()->showMessage(QString("Found %1 local match%2 for '%3'. Searching Drive...")
+                                 .arg(m_matchingFileIds.size())
+                                 .arg(m_matchingFileIds.size() == 1 ? "" : "es")
+                                 .arg(query));
+
+    // 3. REMOTE DRIVE SEARCH (for un-cached files and attachments like .txt, .cpp, .png)
     bool includeAttachments = m_includeAttachmentsCheck->isChecked();
     m_drive->searchConversations(query, includeAttachments);
 }
@@ -571,6 +658,7 @@ void MainWindow::onSignIn()
 
 void MainWindow::onSignOut()
 {
+    m_syncMgr->cancelSync();
     m_auth->signOut();
     m_signInAction->setVisible(true);
     m_signOutAction->setVisible(false);
@@ -592,35 +680,26 @@ void MainWindow::onFolderFound(const QString &folderId)
 void MainWindow::onConversationsLoaded(const QList<DriveFile> &files)
 {
     m_conversationFiles = files;
-    statusBar()->showMessage(QString("Found %1 potential conversations.").arg(files.size()));
-    Logger::instance().info(QString("DriveApi returned %1 potential conversation files.").arg(files.size()));
-
     m_convPane->clear();
     m_convPane->setFileList(files);
 
+    // 1. Immediately populate UI from SQLite cache for instant startup
     for (const auto &f : files)
     {
         QDateTime cachedModTime = m_cache.getModifiedTime(f.fileId);
         if (cachedModTime.isValid() && cachedModTime.toSecsSinceEpoch() == f.modifiedTime.toSecsSinceEpoch())
         {
             QJsonObject data = m_cache.loadConversation(f.fileId);
-            if (!data.isEmpty())
+            if (ConversationModel::isLikelyConversation(data))
             {
-                // --- ADDED GUARD HERE ---
-                // Only add to the list if the cached data is actually a conversation
-                if (ConversationModel::isLikelyConversation(data))
-                {
-                    Conversation parsed = m_convModel->parseConversation(f.fileId, f.fileName, data);
-                    m_convPane->addConversation(parsed);
-                }
-                else
-                {
-                    // If cached data is junk, remove the stub immediately
-                    m_convPane->removeConversation(f.fileId);
-                }
+                Conversation parsed = m_convModel->parseConversation(f.fileId, f.fileName, data);
+                m_convPane->addConversation(parsed);
             }
         }
     }
+
+    // 2. Start background sync for new/modified conversations
+    m_syncMgr->startSync(files);
 }
 
 void MainWindow::onConversationSelected(int index)
@@ -752,4 +831,31 @@ int MainWindow::indexForFileId() const
     }
 
     return -1;
+}
+
+void MainWindow::ensureConversationInPane(const QString &fileId)
+{
+    for (int i = 0; i < m_convPane->conversationCount(); ++i)
+    {
+        if (m_convPane->conversationAt(i).fileId == fileId && !m_convPane->conversationAt(i).messages.isEmpty())
+        {
+            return;
+        }
+    }
+
+    QJsonObject data = m_cache.loadConversation(fileId);
+    if (!data.isEmpty() && ConversationModel::isLikelyConversation(data))
+    {
+        QString fileName;
+        for (const auto &f : m_conversationFiles)
+        {
+            if (f.fileId == fileId)
+            {
+                fileName = f.fileName;
+                break;
+            }
+        }
+        Conversation parsed = m_convModel->parseConversation(fileId, fileName, data);
+        m_convPane->addConversation(parsed);
+    }
 }

@@ -23,7 +23,7 @@ public:
     void loadConfig(const QString &configPath);
     void setCredentials(const QString &clientId, const QString &clientSecret);
     void authenticate();
-    void refreshAccessToken();
+    void refreshAccessToken(bool isInitialLogin = false);
     void signOut();
     void submitAuthCode(const QString &code);
 
@@ -58,6 +58,7 @@ private:
     QString m_refreshToken;
     int m_expiresIn = 0;
     QDateTime m_tokenAcquiredAt;
+    bool m_isRefreshing = false;
     QString formatExpiryMessage(const QString &prefix, int expiresInSec) const;
     void stopCallbackServer();
 };

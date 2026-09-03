@@ -13,8 +13,10 @@ class HtmlDelegate : public QStyledItemDelegate
 public:
     explicit HtmlDelegate(QObject *parent = nullptr) : QStyledItemDelegate(parent) {}
 
+    // File: src/ui/PromptListPane.cpp
+
     void paint(QPainter *painter, const QStyleOptionViewItem &option,
-               const QModelIndex &index) const override
+                             const QModelIndex &index) const
     {
         QStyleOptionViewItem options = option;
         initStyleOption(&options, index);
@@ -29,14 +31,22 @@ public:
 
         bool isSelected = (options.state & QStyle::State_Selected);
         bool hasFocus = (options.state & QStyle::State_HasFocus) || (options.state & QStyle::State_Active);
-
         QPalette::ColorGroup group = hasFocus ? QPalette::Active : QPalette::Inactive;
-        QColor textColor = options.palette.color(group, isSelected ? QPalette::HighlightedText : QPalette::Text);
 
-        // Fix for Windows inactive selection (light grey background where HighlightedText becomes invisible white):
-        if (isSelected && !hasFocus)
+        // Default to the standard readable text color (black in light mode, white in dark mode)
+        QColor textColor = options.palette.color(group, QPalette::Text);
+
+        // Only switch to HighlightedText on platforms/styles that use a truly dark selection bar (e.g. classic dark blue)
+        if (isSelected)
         {
-            textColor = options.palette.color(QPalette::Inactive, QPalette::Text);
+            bool isWindowsTheme = style->inherits("QWindowsVistaStyle") || style->inherits("QWindows11Style");
+            QColor highlightColor = options.palette.color(group, QPalette::Highlight);
+
+            // If not Windows native theme and the highlight background is dark, use HighlightedText
+            if (!isWindowsTheme && highlightColor.lightnessF() < 0.4)
+            {
+                textColor = options.palette.color(group, QPalette::HighlightedText);
+            }
         }
 
         doc.setDefaultStyleSheet(QString("body, div, p { color: %1; }").arg(textColor.name()));

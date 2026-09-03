@@ -15,6 +15,9 @@
 #include "models/Conversation.h"
 #include "api/LocalCache.h"
 
+
+class ConversationSyncManager;
+
 struct DriveFile;
 class AuthManager;
 class DriveApi;
@@ -57,6 +60,7 @@ private:
     void switchToCopilotBackend();
     void addCopilotMessage(const QString &role, const QString &text);
     int indexForFileId() const;
+    void ensureConversationInPane(const QString &fileId);
 
     AuthManager *m_auth;
     DriveApi *m_drive;
@@ -96,4 +100,5 @@ private:
     QString m_currentConversationId;
     bool m_waitingForResponse = false;
     QSet<QString> m_matchingFileIds; // Track IDs that pass the current search filter
+    ConversationSyncManager *m_syncMgr;
 };

@@ -101,3 +101,75 @@ QDateTime LocalCache::getModifiedTime(const QString &fileId)
 
     return QDateTime::fromString(query.value(0).toString(), Qt::ISODate);
 }
+
+QSet<QString> LocalCache::getAllCachedFileIds()
+{
+    QSet<QString> ids;
+    if (!m_initialized) return ids;
+
+    QSqlQuery query("SELECT file_id FROM conversations", m_db);
+    while (query.next()) {
+        ids.insert(query.value(0).toString());
+    }
+    return ids;
+}
+
+void LocalCache::deleteConversation(const QString &fileId)
+{
+    if (!m_initialized) return;
+
+    QSqlQuery query(m_db);
+    query.prepare("DELETE FROM conversations WHERE file_id = :fid");
+    query.bindValue(":fid", fileId);
+    query.exec();
+}
+
+QSet<QString> LocalCache::searchContent(const QString &term)
+{
+    QSet<QString> matches;
+    if (!m_initialized || term.trimmed().isEmpty())
+        return matches;
+
+    QSqlQuery q(m_db);
+    // Searches both conversation title and full message JSON (prompts, answers, thoughts)
+    q.prepare("SELECT file_id FROM conversations WHERE file_name LIKE :term OR json_data LIKE :term");
+    q.bindValue(":term", "%" + term + "%");
+
+    if (q.exec())
+    {
+        while (q.next())
+        {
+            matches.insert(q.value(0).toString());
+        }
+    }
+    else
+    {
+        Logger::instance().error("LocalCache::searchContent failed: " + q.lastError().text());
+    }
+    return matches;
+}
+
+QSet<QString> LocalCache::findConversationsByAttachmentId(const QString &attachmentId)
+{
+    QSet<QString> matches;
+    if (!m_initialized || attachmentId.trimmed().isEmpty())
+        return matches;
+
+    QSqlQuery q(m_db);
+    // Finds any conversation whose JSON references this attachment ID
+    q.prepare("SELECT file_id FROM conversations WHERE json_data LIKE :attId");
+    q.bindValue(":attId", "%" + attachmentId + "%");
+
+    if (q.exec())
+    {
+        while (q.next())
+        {
+            matches.insert(q.value(0).toString());
+        }
+    }
+    else
+    {
+        Logger::instance().error("LocalCache::findConversationsByAttachmentId failed: " + q.lastError().text());
+    }
+    return matches;
+}
