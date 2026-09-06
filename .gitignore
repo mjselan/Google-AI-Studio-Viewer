@@ -17,6 +17,7 @@ CMakeLists.txt.user
 *.swp
 *.swo
 *~
+.VSCodecounter/
 
 # Qt Creator
 *.autosave
