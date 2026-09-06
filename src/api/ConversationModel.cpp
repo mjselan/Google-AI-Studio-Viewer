@@ -1,4 +1,5 @@
 #include "ConversationModel.h"
+#include "LocalCache.h"
 #include "app/Logger.h"
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -6,6 +7,28 @@
 
 ConversationModel::ConversationModel(QObject *parent)
     : QObject(parent) {}
+
+bool ConversationModel::ingestConversation(const QString &fileId,
+                                           const QString &fileName,
+                                           const QDateTime &modTime,
+                                           const QJsonObject &data,
+                                           LocalCache *cache,
+                                           Conversation &outConv) const
+{
+    if (!isLikelyConversation(data))
+    {
+        Logger::instance().warn("Ingest rejected non-conversation file (no runSettings): " + fileName);
+        return false;
+    }
+
+    if (cache)
+    {
+        cache->saveConversation(fileId, fileName, modTime, data);
+    }
+
+    outConv = parseConversation(fileId, fileName, data);
+    return true;
+}
 
 Conversation ConversationModel::parseConversation(const QString &fileId,
                                                   const QString &fileName,
@@ -27,8 +50,8 @@ Conversation ConversationModel::parseConversation(const QString &fileId,
     for (const auto &chunk : chunks)
         conv.messages.append(Message::fromJson(chunk.toObject()));
 
-    // Sort chronologically using epoch milliseconds
-    std::sort(conv.messages.begin(), conv.messages.end(),
+    // Item #3: Use std::stable_sort to preserve relative ordering for chunks with identical timestamps
+    std::stable_sort(conv.messages.begin(), conv.messages.end(),
               [](const Message &a, const Message &b)
               {
                   qint64 ta = a.createTime.isValid() ? a.createTime.toMSecsSinceEpoch() : 0;
@@ -46,8 +69,6 @@ Conversation ConversationModel::parseConversation(const QString &fileId,
 
 bool ConversationModel::isLikelyConversation(const QJsonObject &root)
 {
-    // Google AI Studio chat logs ALWAYS have a "runSettings" object
-    // and usually a "chunkedPrompt" or "systemInstruction"
     return root.contains("runSettings") && root["runSettings"].isObject();
 }
 
@@ -107,22 +128,34 @@ void ConversationModel::buildPairs(Conversation &conv) const
                 modelResponded = false;
             }
         }
-        else if (msg.role == "model" && promptActive)
+        else if (msg.role == "model")
         {
-            if (!modelResponded)
+            if (promptActive)
             {
-                // First model response for current turn -> create new pair
-                Conversation::PromptResponsePair pair;
-                pair.prompt = currentPrompt;
-                pair.responses.append(msg);
-                conv.pairs.append(pair);
-                modelResponded = true;
+                if (!modelResponded)
+                {
+                    Conversation::PromptResponsePair pair;
+                    pair.prompt = currentPrompt;
+                    pair.responses.append(msg);
+                    conv.pairs.append(pair);
+                    modelResponded = true;
+                }
+                else
+                {
+                    if (!conv.pairs.isEmpty())
+                        conv.pairs.last().responses.append(msg);
+                }
             }
             else
             {
-                // Subsequent model chunk for current turn -> append to existing pair
-                if (!conv.pairs.isEmpty())
-                    conv.pairs.last().responses.append(msg);
+                // Item #5: Handle model message received before any user prompt without dropping data
+                Logger::instance().warn("buildPairs: Model response found before any user prompt: " + msg.text.left(60));
+                Conversation::PromptResponsePair pair;
+                pair.prompt.text = "[Initial Model Output]";
+                pair.prompt.role = "user";
+                pair.prompt.createTime = msg.createTime;
+                pair.responses.append(msg);
+                conv.pairs.append(pair);
             }
         }
     }

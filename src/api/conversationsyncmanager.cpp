@@ -183,15 +183,14 @@ void ConversationSyncManager::handleReply(QNetworkReply *reply, DownloadTask tas
     auto doc = QJsonDocument::fromJson(reply->readAll());
     QJsonObject data = doc.object();
 
-    if (ConversationModel::isLikelyConversation(data))
+    Conversation conv;
+    if (m_model->ingestConversation(task.file.fileId, task.file.fileName, task.file.modifiedTime, data, m_cache, conv))
     {
-        m_cache->saveConversation(task.file.fileId, task.file.fileName, task.file.modifiedTime, data);
-        Conversation conv = m_model->parseConversation(task.file.fileId, task.file.fileName, data);
         emit conversationSynced(conv);
     }
     else
     {
-        Logger::instance().warn("Skipping non-conversation JSON: " + task.file.fileName);
+        emit conversationInvalid(task.file.fileId);
     }
 
     m_completedTasks++;

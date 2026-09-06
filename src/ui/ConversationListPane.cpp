@@ -53,7 +53,8 @@ ConversationListPane::ConversationListPane(QWidget *parent)
 
 bool ConversationListPane::isValidConv(const Conversation &conv) const
 {
-    return true;
+    // Item #10: Real validation check preventing empty stubs from rendering
+    return !conv.fileId.trimmed().isEmpty();
 }
 
 void ConversationListPane::setFileList(const QList<DriveFile> &files)
@@ -199,31 +200,32 @@ void ConversationListPane::applySort()
         return t.isValid() ? t.toMSecsSinceEpoch() : 0;
     };
 
+    // Item #3: Use stable_sort to maintain deterministic order on ties
     switch (m_sortMode)
     {
     case NewestFirst:
-        std::sort(m_conversations.begin(), m_conversations.end(),
-                  [sortTimeMs](const Conversation &a, const Conversation &b)
-                  {
-                      return sortTimeMs(a) > sortTimeMs(b);
-                  });
+        std::stable_sort(m_conversations.begin(), m_conversations.end(),
+                         [sortTimeMs](const Conversation &a, const Conversation &b)
+                         {
+                             return sortTimeMs(a) > sortTimeMs(b);
+                         });
         break;
     case OldestFirst:
-        std::sort(m_conversations.begin(), m_conversations.end(),
-                  [sortTimeMs](const Conversation &a, const Conversation &b)
-                  {
-                      return sortTimeMs(a) < sortTimeMs(b);
-                  });
+        std::stable_sort(m_conversations.begin(), m_conversations.end(),
+                         [sortTimeMs](const Conversation &a, const Conversation &b)
+                         {
+                             return sortTimeMs(a) < sortTimeMs(b);
+                         });
         break;
     case AlphaAZ:
-        std::sort(m_conversations.begin(), m_conversations.end(),
-                  [](const Conversation &a, const Conversation &b)
-                  { return a.fileName.toLower() < b.fileName.toLower(); });
+        std::stable_sort(m_conversations.begin(), m_conversations.end(),
+                         [](const Conversation &a, const Conversation &b)
+                         { return a.fileName.toLower() < b.fileName.toLower(); });
         break;
     case AlphaZA:
-        std::sort(m_conversations.begin(), m_conversations.end(),
-                  [](const Conversation &a, const Conversation &b)
-                  { return a.fileName.toLower() > b.fileName.toLower(); });
+        std::stable_sort(m_conversations.begin(), m_conversations.end(),
+                         [](const Conversation &a, const Conversation &b)
+                         { return a.fileName.toLower() > b.fileName.toLower(); });
         break;
     }
 }
@@ -252,7 +254,6 @@ void ConversationListPane::selectByFileId(const QString &fileId)
     }
 }
 
-// File: src\ui\ConversationListPane.cpp
 void ConversationListPane::removeConversation(const QString &fileId)
 {
     Logger::instance().info("Pane: removeConversation called for ID: " + fileId);

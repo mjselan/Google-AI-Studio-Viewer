@@ -57,6 +57,7 @@ MainWindow::MainWindow(QWidget *parent)
 
     connect(m_auth, &AuthManager::authFailed, this, [this](const QString &err)
             {
+                m_drive->resetState(); // Item #4: Unblock DriveApi queue
                 statusBar()->showMessage("Auth failed: " + err);
                 QMessageBox::warning(this, "Auth Error", err);
             });
@@ -70,29 +71,10 @@ MainWindow::MainWindow(QWidget *parent)
                 statusBar()->showMessage("'Google AI Studio' folder not found in Drive");
             });
     connect(m_drive, &DriveApi::conversationListReady, this, &MainWindow::onConversationsLoaded);
-    // File: src\ui\MainWindow.cpp
 
     connect(m_drive, &DriveApi::conversationDownloaded, this,
             [this](const QString &fileId, const QString &fileName, const QJsonObject &data)
             {
-                // --- NEW CONTENT GUARD ---
-                // Check if the JSON is a real AI Studio chat or just a random JSON file
-                if (!ConversationModel::isLikelyConversation(data))
-                {
-                    Logger::instance().warn("Guard: File failed content check (no runSettings): " + fileName);
-
-                    // 1. Remove from the Sidebar
-                    m_convPane->removeConversation(fileId);
-
-                    // 2. If we are currently searching, remove it from search results too
-                    if (m_matchingFileIds.contains(fileId)) {
-                        m_matchingFileIds.remove(fileId);
-                        m_convPane->setFilterFileIds(m_matchingFileIds);
-                    }
-                    return; // Stop processing this file
-                }
-                Logger::instance().info("Guard: File passed content check: " + fileName);
-                // --- EXISTING LOGIC (Only runs if JSON is valid) ---
                 QDateTime modTime;
                 for (const auto &f : m_conversationFiles)
                 {
@@ -102,16 +84,27 @@ MainWindow::MainWindow(QWidget *parent)
                         break;
                     }
                 }
-                m_cache.saveConversation(fileId, fileName, modTime, data);
 
-                Conversation conv = m_convModel->parseConversation(fileId, fileName, data);
-                m_convPane->addConversation(conv);
-
-                if (m_selectedFileId == fileId)
+                Conversation conv;
+                if (m_convModel->ingestConversation(fileId, fileName, modTime, data, &m_cache, conv))
                 {
-                    int idx = indexForFileId();
-                    if (idx >= 0)
-                        onConversationSelected(idx);
+                    m_convPane->addConversation(conv);
+
+                    if (m_selectedFileId == fileId)
+                    {
+                        int idx = indexForFileId();
+                        if (idx >= 0)
+                            onConversationSelected(idx);
+                    }
+                }
+                else
+                {
+                    m_convPane->removeConversation(fileId);
+                    if (m_matchingFileIds.contains(fileId))
+                    {
+                        m_matchingFileIds.remove(fileId);
+                        m_convPane->setFilterFileIds(m_matchingFileIds);
+                    }
                 }
             });
     connect(m_drive, &DriveApi::apiError, this, [this](const QString &err)
@@ -251,6 +244,17 @@ MainWindow::MainWindow(QWidget *parent)
                         m_matchingFileIds.insert(conv.fileId);
                         m_convPane->setFilterFileIds(m_matchingFileIds);
                     }
+                }
+            });
+
+    connect(m_syncMgr, &ConversationSyncManager::conversationInvalid, this,
+            [this](const QString &fileId)
+            {
+                m_convPane->removeConversation(fileId);
+                if (m_matchingFileIds.contains(fileId))
+                {
+                    m_matchingFileIds.remove(fileId);
+                    m_convPane->setFilterFileIds(m_matchingFileIds);
                 }
             });
 
@@ -659,6 +663,7 @@ void MainWindow::onSignIn()
 void MainWindow::onSignOut()
 {
     m_syncMgr->cancelSync();
+    m_drive->resetState(); // Item #4: Reset DriveApi state
     m_auth->signOut();
     m_signInAction->setVisible(true);
     m_signOutAction->setVisible(false);

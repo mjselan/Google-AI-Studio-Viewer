@@ -111,6 +111,12 @@ void DriveApi::retryPendingRequests()
     }
 }
 
+void DriveApi::resetState()
+{
+    m_refreshInProgress = false;
+    m_pendingRequests.clear();
+}
+
 void DriveApi::findParentConversation(const QString &attachmentFileId)
 {
     if (m_folderId.isEmpty() || attachmentFileId.isEmpty())

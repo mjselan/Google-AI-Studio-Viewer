@@ -125,10 +125,11 @@ void ResponsePane::appendModelResponse(const QString &text, bool isThought, bool
     QString html;
     QString processedText = applySearchHighlight(markdownToHtml(text));
 
-    if (text.startsWith("ERROR: Cannot read"))
+    // Item #8: Case-insensitive check for error messages
+    if (text.startsWith("ERROR:", Qt::CaseInsensitive) || text.startsWith("Error:", Qt::CaseInsensitive))
     {
         html = "<div style='background:#fff3cd; border:1px solid #ffc107; border-radius:4px; padding:8px; margin:4px 0;'>"
-               "<b>&#x26A0; Image not supported:</b><br>" + processedText + "</div>";
+               "<b>&#x26A0; Error / Unsupported Content:</b><br>" + processedText + "</div>";
     }
     else if (isThought)
     {

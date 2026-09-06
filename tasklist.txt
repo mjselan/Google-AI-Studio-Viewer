@@ -1,0 +1,387 @@
+1. Item #3 & Item #5: ConversationModel (Stable Sort & Orphan Model Chunks)
+In src/api/ConversationModel.h
+Add the forward declaration for LocalCache and declare the new unified ingestConversation method (Item #7):
+#pragma once
+
+#include <QObject>
+#include <QList>
+#include <QJsonObject>
+#include <QDateTime>
+#include "models/Conversation.h"
+
+class LocalCache;
+
+class ConversationModel : public QObject
+{
+    Q_OBJECT
+public:
+    explicit ConversationModel(QObject *parent = nullptr);
+
+    Conversation parseConversation(const QString &fileId, const QString &fileName,
+                                   const QJsonObject &root) const;
+    static bool isLikelyConversation(const QJsonObject &root);
+
+    // Unified ingest pipeline: validate -> cache -> parse (Item #7)
+    bool ingestConversation(const QString &fileId,
+                            const QString &fileName,
+                            const QDateTime &modTime,
+                            const QJsonObject &data,
+                            LocalCache *cache,
+                            Conversation &outConv) const;
+
+private:
+    void buildPairs(Conversation &conv) const;
+};
+In src/api/ConversationModel.cpp
+Change std::sort to std::stable_sort (Item #3) to preserve the original sequence of multi-part chunks sharing the same timestamp.
+Handle model chunks arriving without an active prompt turn instead of dropping them silently (Item #5).
+Implement ingestConversation (Item #7).
+#include "ConversationModel.h"
+#include "LocalCache.h"
+#include "app/Logger.h"
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <algorithm>
+
+ConversationModel::ConversationModel(QObject *parent)
+    : QObject(parent) {}
+
+bool ConversationModel::ingestConversation(const QString &fileId,
+                                           const QString &fileName,
+                                           const QDateTime &modTime,
+                                           const QJsonObject &data,
+                                           LocalCache *cache,
+                                           Conversation &outConv) const
+{
+    if (!isLikelyConversation(data))
+    {
+        Logger::instance().warn("Ingest rejected non-conversation file (no runSettings): " + fileName);
+        return false;
+    }
+
+    if (cache)
+    {
+        cache->saveConversation(fileId, fileName, modTime, data);
+    }
+
+    outConv = parseConversation(fileId, fileName, data);
+    return true;
+}
+
+Conversation ConversationModel::parseConversation(const QString &fileId,
+                                                  const QString &fileName,
+                                                  const QJsonObject &root) const
+{
+    Conversation conv;
+    conv.fileId = fileId;
+    conv.fileName = fileName;
+
+    QJsonObject settings = root["runSettings"].toObject();
+    conv.model = settings["model"].toString();
+    conv.temperature = settings["temperature"].toDouble(1.0);
+    conv.topP = settings["topP"].toDouble(0.95);
+    conv.topK = settings["topK"].toInt(64);
+    conv.maxOutputTokens = settings["maxOutputTokens"].toInt(8192);
+    conv.systemInstruction = root["systemInstruction"].toObject();
+
+    QJsonArray chunks = root["chunkedPrompt"].toObject()["chunks"].toArray();
+    for (const auto &chunk : chunks)
+        conv.messages.append(Message::fromJson(chunk.toObject()));
+
+    // Item #3: Use std::stable_sort to preserve relative ordering for chunks with identical timestamps
+    std::stable_sort(conv.messages.begin(), conv.messages.end(),
+                     [](const Message &a, const Message &b)
+                     {
+                         qint64 ta = a.createTime.isValid() ? a.createTime.toMSecsSinceEpoch() : 0;
+                         qint64 tb = b.createTime.isValid() ? b.createTime.toMSecsSinceEpoch() : 0;
+                         if (ta != tb)
+                             return ta < tb;
+                         if (a.role != b.role)
+                             return a.role == "user";
+                         return false;
+                     });
+
+    buildPairs(conv);
+    return conv;
+}
+
+bool ConversationModel::isLikelyConversation(const QJsonObject &root)
+{
+    return root.contains("runSettings") && root["runSettings"].isObject();
+}
+
+void ConversationModel::buildPairs(Conversation &conv) const
+{
+    conv.pairs.clear();
+
+    Message currentPrompt;
+    bool promptActive = false;
+    bool modelResponded = false;
+
+    for (const auto &msg : conv.messages)
+    {
+        if (msg.role == "user")
+        {
+            if (modelResponded)
+            {
+                currentPrompt = msg;
+                promptActive = true;
+                modelResponded = false;
+            }
+            else if (promptActive)
+            {
+                qint64 tCurrent = currentPrompt.createTime.isValid() ? currentPrompt.createTime.toMSecsSinceEpoch() : 0;
+                qint64 tMsg = msg.createTime.isValid() ? msg.createTime.toMSecsSinceEpoch() : 0;
+
+                if (tMsg == tCurrent || msg.text.isEmpty() || currentPrompt.text.isEmpty())
+                {
+                    if (currentPrompt.text.isEmpty() && !msg.text.isEmpty())
+                        currentPrompt.text = msg.text;
+                    if (currentPrompt.driveDocumentId.isEmpty() && !msg.driveDocumentId.isEmpty())
+                        currentPrompt.driveDocumentId = msg.driveDocumentId;
+                    if (currentPrompt.inlineImageData.isEmpty() && !msg.inlineImageData.isEmpty())
+                    {
+                        currentPrompt.inlineImageData = msg.inlineImageData;
+                        currentPrompt.inlineImageMime = msg.inlineImageMime;
+                        currentPrompt.inlineImages = msg.inlineImages;
+                    }
+                }
+                else
+                {
+                    Conversation::PromptResponsePair pair;
+                    pair.prompt = currentPrompt;
+                    conv.pairs.append(pair);
+
+                    currentPrompt = msg;
+                }
+            }
+            else
+            {
+                currentPrompt = msg;
+                promptActive = true;
+                modelResponded = false;
+            }
+        }
+        else if (msg.role == "model")
+        {
+            if (promptActive)
+            {
+                if (!modelResponded)
+                {
+                    Conversation::PromptResponsePair pair;
+                    pair.prompt = currentPrompt;
+                    pair.responses.append(msg);
+                    conv.pairs.append(pair);
+                    modelResponded = true;
+                }
+                else
+                {
+                    if (!conv.pairs.isEmpty())
+                        conv.pairs.last().responses.append(msg);
+                }
+            }
+            else
+            {
+                // Item #5: Handle model message received before any user prompt without dropping data
+                Logger::instance().warn("buildPairs: Model response found before any user prompt: " + msg.text.left(60));
+                Conversation::PromptResponsePair pair;
+                pair.prompt.text = "[Initial Model Output]";
+                pair.prompt.role = "user";
+                pair.prompt.createTime = msg.createTime;
+                pair.responses.append(msg);
+                conv.pairs.append(pair);
+            }
+        }
+    }
+
+    if (promptActive && !modelResponded)
+    {
+        Conversation::PromptResponsePair pair;
+        pair.prompt = currentPrompt;
+        conv.pairs.append(pair);
+    }
+}
+
+2. Item #4: DriveApi State Reset (Prevent Deadlock)
+In src/api/DriveApi.h
+Add resetState() to public methods:
+public:
+    void resetState();
+In src/api/DriveApi.cpp
+Implement resetState() to clear pending requests and reset m_refreshInProgress:
+void DriveApi::resetState()
+{
+    m_refreshInProgress = false;
+    m_pendingRequests.clear();
+}
+
+3. Item #7: ConversationSyncManager (Use Ingest Pipeline)
+In src/api/conversationsyncmanager.h
+Add a signal so invalid files found during background sync are cleaned up from the UI:
+signals:
+    void conversationInvalid(const QString &fileId);
+In src/api/conversationsyncmanager.cpp
+Update handleReply to use m_model->ingestConversation:
+    auto doc = QJsonDocument::fromJson(reply->readAll());
+    QJsonObject data = doc.object();
+
+    Conversation conv;
+    if (m_model->ingestConversation(task.file.fileId, task.file.fileName, task.file.modifiedTime, data, m_cache, conv))
+    {
+        emit conversationSynced(conv);
+    }
+    else
+    {
+        emit conversationInvalid(task.file.fileId);
+    }
+
+    m_completedTasks++;
+    emit syncProgress(m_completedTasks, m_totalTasks, task.file.fileName);
+
+4. Item #10 & Item #3: ConversationListPane (Clean Up Validation & Stable Sort)
+In src/ui/ConversationListPane.cpp:
+Validate that conv.fileId is not empty in isValidConv.
+Use std::stable_sort in applySort().
+Remove the stray tool comment artifact.
+bool ConversationListPane::isValidConv(const Conversation &conv) const
+{
+    // Item #10: Real validation check preventing empty stubs from rendering
+    return !conv.fileId.trimmed().isEmpty();
+}
+
+void ConversationListPane::applySort()
+{
+    auto sortTimeMs = [](const Conversation &c) -> qint64
+    {
+        QDateTime t = c.messages.isEmpty() ? c.lastModified : c.messages.last().createTime;
+        return t.isValid() ? t.toMSecsSinceEpoch() : 0;
+    };
+
+    // Item #3: Use stable_sort to maintain deterministic order on ties
+    switch (m_sortMode)
+    {
+    case NewestFirst:
+        std::stable_sort(m_conversations.begin(), m_conversations.end(),
+                         [sortTimeMs](const Conversation &a, const Conversation &b)
+                         {
+                             return sortTimeMs(a) > sortTimeMs(b);
+                         });
+        break;
+    case OldestFirst:
+        std::stable_sort(m_conversations.begin(), m_conversations.end(),
+                         [sortTimeMs](const Conversation &a, const Conversation &b)
+                         {
+                             return sortTimeMs(a) < sortTimeMs(b);
+                         });
+        break;
+    case AlphaAZ:
+        std::stable_sort(m_conversations.begin(), m_conversations.end(),
+                         [](const Conversation &a, const Conversation &b)
+                         { return a.fileName.toLower() < b.fileName.toLower(); });
+        break;
+    case AlphaZA:
+        std::stable_sort(m_conversations.begin(), m_conversations.end(),
+                         [](const Conversation &a, const Conversation &b)
+                         { return a.fileName.toLower() > b.fileName.toLower(); });
+        break;
+    }
+}
+
+5. Item #4 & Item #7: MainWindow (Reset on Failure & Unified Ingestion)
+In src/ui/MainWindow.cpp:
+Reset DriveApi on sign-out and auth failure (Item #4):
+    connect(m_auth, &AuthManager::authFailed, this, [this](const QString &err)
+            {
+                m_drive->resetState(); // Item #4: Unblock DriveApi queue
+                statusBar()->showMessage("Auth failed: " + err);
+                QMessageBox::warning(this, "Auth Error", err);
+            });
+And in onSignOut():
+void MainWindow::onSignOut()
+{
+    m_syncMgr->cancelSync();
+    m_drive->resetState(); // Item #4: Reset DriveApi state
+    m_auth->signOut();
+    m_signInAction->setVisible(true);
+    m_signOutAction->setVisible(false);
+    m_convPane->clear();
+    m_promptPane->clear();
+    m_responsePane->clear();
+    statusBar()->showMessage("Signed out.");
+}
+Use unified ingestConversation for on-demand downloads (Item #7):
+    connect(m_drive, &DriveApi::conversationDownloaded, this,
+            [this](const QString &fileId, const QString &fileName, const QJsonObject &data)
+            {
+                QDateTime modTime;
+                for (const auto &f : m_conversationFiles)
+                {
+                    if (f.fileId == fileId)
+                    {
+                        modTime = f.modifiedTime;
+                        break;
+                    }
+                }
+
+                Conversation conv;
+                if (m_convModel->ingestConversation(fileId, fileName, modTime, data, &m_cache, conv))
+                {
+                    m_convPane->addConversation(conv);
+
+                    if (m_selectedFileId == fileId)
+                    {
+                        int idx = indexForFileId();
+                        if (idx >= 0)
+                            onConversationSelected(idx);
+                    }
+                }
+                else
+                {
+                    m_convPane->removeConversation(fileId);
+                    if (m_matchingFileIds.contains(fileId))
+                    {
+                        m_matchingFileIds.remove(fileId);
+                        m_convPane->setFilterFileIds(m_matchingFileIds);
+                    }
+                }
+            });
+Handle invalid background-synced conversations (Item #7):
+    connect(m_syncMgr, &ConversationSyncManager::conversationInvalid, this,
+            [this](const QString &fileId)
+            {
+                m_convPane->removeConversation(fileId);
+                if (m_matchingFileIds.contains(fileId))
+                {
+                    m_matchingFileIds.remove(fileId);
+                    m_convPane->setFilterFileIds(m_matchingFileIds);
+                }
+            });
+
+6. Item #8: ResponsePane (Magic String Sniffing)
+In src/ui/ResponsePane.cpp, broaden the error prefix check so it is case-insensitive and supports error patterns:
+void ResponsePane::appendModelResponse(const QString &text, bool isThought, bool showThoughts)
+{
+    if (isThought && !showThoughts)
+        return;
+
+    QString html;
+    QString processedText = applySearchHighlight(markdownToHtml(text));
+
+    // Item #8: Case-insensitive check for error messages
+    if (text.startsWith("ERROR:", Qt::CaseInsensitive) || text.startsWith("Error:", Qt::CaseInsensitive))
+    {
+        html = "<div style='background:#fff3cd; border:1px solid #ffc107; border-radius:4px; padding:8px; margin:4px 0;'>"
+               "<b>&#x26A0; Error / Unsupported Content:</b><br>" + processedText + "</div>";
+    }
+    else if (isThought)
+    {
+        html = "<div style='background:#f0f0f0; border-left:3px solid #888; padding:8px; margin:4px 0;'>"
+               "<i>Thought:</i><br>" + processedText + "</div>";
+    }
+    else
+    {
+        html = "<div style='padding:8px; margin:4px 0;'>" + processedText + "</div>";
+    }
+
+    m_browser->append(html);
+}

@@ -40,6 +40,7 @@ public:
     void downloadAttachment(const QString &fileId);
     void searchConversations(const QString &query, bool includeAttachments = false);
     void retryPendingRequests();
+    void resetState();
     void findParentConversation(const QString &attachmentFileId);
 
     static bool isConversationFile(const QString &fileName, const QString &mime, const QString &ext);

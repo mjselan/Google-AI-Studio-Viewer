@@ -31,6 +31,7 @@ signals:
     void syncStarted(int totalToDownload);
     void syncProgress(int completed, int total, const QString &currentFileName);
     void conversationSynced(const Conversation &conv);
+    void conversationInvalid(const QString &fileId);
     void syncFinished(int downloadedCount, int upToDateCount);
     void tokenNeedsRefresh();
     void syncError(const QString &error);
