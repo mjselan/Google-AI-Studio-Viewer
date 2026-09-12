@@ -40,7 +40,6 @@ set(SOURCES
     src/ui/ConversationListPane.cpp
     src/ui/PromptListPane.cpp
     src/ui/ResponsePane.cpp
-    src/ui/FilePreviewWidget.cpp
     src/ui/ImageViewerDialog.cpp
 )
 
@@ -60,7 +59,6 @@ set(HEADERS
     src/ui/ConversationListPane.h
     src/ui/PromptListPane.h
     src/ui/ResponsePane.h
-    src/ui/FilePreviewWidget.h
     src/ui/ImageViewerDialog.h
 )
 

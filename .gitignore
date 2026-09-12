@@ -1,5 +1,6 @@
 # Build
 build/
+out/
 cmake-build-*/
 
 # IDE
@@ -18,6 +19,8 @@ CMakeLists.txt.user
 *.swo
 *~
 .VSCodecounter/
+.VSCodeCounter/
+CMakeUserPresets.json
 
 # Qt Creator
 *.autosave
@@ -46,7 +49,18 @@ Thumbs.db
 
 # Config (template only - user provides their own)
 config/oauth_config.json
+google.json
+*oauth*.json
+*credentials*.json
+*client_secret*.json
 
 # Logs
 *.log
 codetree.txt
+build_*.txt
+build?.txt
+build*.log
+
+# Local/dev notes
+tasklist.txt
+codereview.txt
