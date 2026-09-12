@@ -12,6 +12,18 @@
 #include <QTcpServer>
 #include <QTcpSocket>
 #include <QHostAddress>
+#include <QCryptographicHash>
+#include <QRandomGenerator>
+#include <QEventLoop>
+
+// Cross-platform QtKeychain header
+#if __has_include(<qt6keychain/keychain.h>)
+#include <qt6keychain/keychain.h>
+#elif __has_include(<keychain.h>)
+#include <keychain.h>
+#endif
+
+static const char *KEYCHAIN_SERVICE = "GoogleAIViewer";
 
 AuthManager::AuthManager(QObject *parent)
     : QObject(parent)
@@ -25,7 +37,6 @@ bool AuthManager::isAuthenticated() const
 }
 
 QString AuthManager::accessToken() const { return m_accessToken; }
-
 int AuthManager::expiresIn() const { return m_expiresIn; }
 
 void AuthManager::loadConfig(const QString &configPath)
@@ -46,8 +57,6 @@ void AuthManager::loadConfig(const QString &configPath)
     m_clientId = obj["client_id"].toString();
     m_clientSecret = obj["client_secret"].toString();
     m_redirectUri.clear();
-
-    // Set explicitly to prevent duplicate accumulative appends
     m_scopes = { QStringLiteral("https://www.googleapis.com/auth/drive.readonly") };
 
     loadSavedTokens();
@@ -63,6 +72,103 @@ void AuthManager::setCredentials(const QString &clientId, const QString &clientS
     loadSavedTokens();
 }
 
+// --- Cross-Platform OS Vault (Item #2) ---
+
+void AuthManager::writeTokenToVault(const QString &key, const QString &value)
+{
+    if (value.isEmpty()) return;
+
+    QKeychain::WritePasswordJob job(QString::fromLatin1(KEYCHAIN_SERVICE));
+    job.setAutoDelete(false);
+    job.setKey(key);
+    job.setTextData(value);
+
+    bool finished = false;
+    QEventLoop loop;
+    connect(&job, &QKeychain::Job::finished, &loop, [&loop, &finished]() {
+        finished = true;
+        loop.quit();
+    });
+    job.start();
+    if (!finished)
+        loop.exec();
+
+    if (job.error() != QKeychain::NoError)
+    {
+        Logger::instance().warn(QString("Failed to write %1 to OS keychain: %2")
+                                    .arg(key, job.errorString()));
+    }
+}
+
+QString AuthManager::readTokenFromVault(const QString &key)
+{
+    QKeychain::ReadPasswordJob job(QString::fromLatin1(KEYCHAIN_SERVICE));
+    job.setAutoDelete(false);
+    job.setKey(key);
+
+    bool finished = false;
+    QEventLoop loop;
+    connect(&job, &QKeychain::Job::finished, &loop, [&loop, &finished]() {
+        finished = true;
+        loop.quit();
+    });
+    job.start();
+    if (!finished)
+        loop.exec();
+
+    if (job.error() == QKeychain::NoError)
+    {
+        return job.textData();
+    }
+    return QString();
+}
+
+void AuthManager::deleteTokenFromVault(const QString &key)
+{
+    QKeychain::DeletePasswordJob job(QString::fromLatin1(KEYCHAIN_SERVICE));
+    job.setAutoDelete(false);
+    job.setKey(key);
+
+    bool finished = false;
+    QEventLoop loop;
+    connect(&job, &QKeychain::Job::finished, &loop, [&loop, &finished]() {
+        finished = true;
+        loop.quit();
+    });
+    job.start();
+    if (!finished)
+        loop.exec();
+}
+
+void AuthManager::storeTokens(const QString &access, const QString &refresh, int expiresIn)
+{
+    m_accessToken = access;
+    m_expiresIn = expiresIn;
+    m_tokenAcquiredAt = QDateTime::currentDateTimeUtc();
+
+    if (!refresh.isEmpty())
+        m_refreshToken = refresh;
+
+    // 1. Store sensitive tokens in OS Vault (Windows Credential Mgr / macOS Keychain / Linux Secret Service)
+    writeTokenToVault("access_token", m_accessToken);
+    if (!m_refreshToken.isEmpty())
+        writeTokenToVault("refresh_token", m_refreshToken);
+
+    // 2. Store non-sensitive expiry timestamps in standard QSettings
+    auto *app = qobject_cast<Application *>(qApp);
+    if (app)
+    {
+        QSettings &s = app->settings();
+        s.setValue("auth/expires_in", m_expiresIn);
+        s.setValue("auth/token_acquired_at", m_tokenAcquiredAt.toString(Qt::ISODate));
+
+        // Clean up legacy plaintext tokens if they existed in QSettings
+        s.remove("auth/access_token");
+        s.remove("auth/refresh_token");
+        s.sync();
+    }
+}
+
 void AuthManager::loadSavedTokens()
 {
     auto *app = qobject_cast<Application *>(qApp);
@@ -70,14 +176,32 @@ void AuthManager::loadSavedTokens()
         return;
 
     QSettings &s = app->settings();
-    m_refreshToken = s.value("auth/refresh_token").toString();
-    m_accessToken = s.value("auth/access_token").toString();
     m_expiresIn = s.value("auth/expires_in").toInt();
 
     QString acquiredStr = s.value("auth/token_acquired_at").toString();
     if (!acquiredStr.isEmpty())
         m_tokenAcquiredAt = QDateTime::fromString(acquiredStr, Qt::ISODate);
 
+    // 1. Read tokens from the OS Vault
+    m_refreshToken = readTokenFromVault("refresh_token");
+    m_accessToken = readTokenFromVault("access_token");
+
+    // 2. Migration fallback: If not in vault yet, check legacy QSettings
+    if (m_refreshToken.isEmpty() && s.contains("auth/refresh_token"))
+    {
+        m_refreshToken = s.value("auth/refresh_token").toString();
+        m_accessToken = s.value("auth/access_token").toString();
+        // Migrate to vault immediately
+        if (!m_refreshToken.isEmpty())
+            writeTokenToVault("refresh_token", m_refreshToken);
+        if (!m_accessToken.isEmpty())
+            writeTokenToVault("access_token", m_accessToken);
+        s.remove("auth/refresh_token");
+        s.remove("auth/access_token");
+        s.sync();
+    }
+
+    // Check if loaded access token is expired
     if (!m_accessToken.isEmpty() && m_tokenAcquiredAt.isValid())
     {
         qint64 elapsedSec = m_tokenAcquiredAt.secsTo(QDateTime::currentDateTimeUtc());
@@ -87,6 +211,83 @@ void AuthManager::loadSavedTokens()
             m_accessToken.clear();
         }
     }
+}
+
+void AuthManager::signOut()
+{
+    stopCallbackServer();
+    m_accessToken.clear();
+    m_refreshToken.clear();
+    m_expiresIn = 0;
+    m_tokenAcquiredAt = QDateTime();
+
+    // Delete credentials from OS vault
+    deleteTokenFromVault("access_token");
+    deleteTokenFromVault("refresh_token");
+
+    auto *app = qobject_cast<Application *>(qApp);
+    if (app)
+    {
+        QSettings &s = app->settings();
+        s.remove("auth/refresh_token");
+        s.remove("auth/access_token");
+        s.remove("auth/expires_in");
+        s.remove("auth/token_acquired_at");
+        s.sync();
+    }
+}
+
+// --- PKCE & CSRF State (Item #1) ---
+
+void AuthManager::generatePkceAndState(QString &outChallenge, QString &outState)
+{
+    // 1. Generate 32 secure random bytes for code_verifier
+    QByteArray verifierBytes(32, Qt::Uninitialized);
+    QRandomGenerator::securelySeeded().fillRange(
+        reinterpret_cast<quint32 *>(verifierBytes.data()),
+        verifierBytes.size() / sizeof(quint32));
+
+    // RFC 7636: Base64URL without padding = 43 characters
+    m_codeVerifier = QString::fromLatin1(
+        verifierBytes.toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals));
+
+    // 2. Compute SHA-256 code_challenge
+    QByteArray hash = QCryptographicHash::hash(m_codeVerifier.toLatin1(), QCryptographicHash::Sha256);
+    outChallenge = QString::fromLatin1(
+        hash.toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals));
+
+    // 3. Generate 24 random bytes for CSRF state nonce
+    QByteArray stateBytes(24, Qt::Uninitialized);
+    QRandomGenerator::securelySeeded().fillRange(
+        reinterpret_cast<quint32 *>(stateBytes.data()),
+        stateBytes.size() / sizeof(quint32));
+    m_oauthState = QString::fromLatin1(
+        stateBytes.toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals));
+    outState = m_oauthState;
+}
+
+QString AuthManager::buildAuthUrl() const
+{
+    QByteArray hash = QCryptographicHash::hash(m_codeVerifier.toLatin1(), QCryptographicHash::Sha256);
+    QString codeChallenge = QString::fromLatin1(
+        hash.toBase64(QByteArray::Base64UrlEncoding | QByteArray::OmitTrailingEquals));
+
+    QUrlQuery query;
+    query.addQueryItem("client_id", m_clientId);
+    query.addQueryItem("redirect_uri", m_redirectUri);
+    query.addQueryItem("response_type", "code");
+    query.addQueryItem("scope", m_scopes.join(' '));
+    query.addQueryItem("access_type", "offline");
+    query.addQueryItem("prompt", "consent");
+
+    // PKCE & CSRF State
+    query.addQueryItem("state", m_oauthState);
+    query.addQueryItem("code_challenge", codeChallenge);
+    query.addQueryItem("code_challenge_method", "S256");
+
+    QUrl url("https://accounts.google.com/o/oauth2/v2/auth");
+    url.setQuery(query);
+    return url.toString();
 }
 
 void AuthManager::authenticate()
@@ -105,7 +306,6 @@ void AuthManager::authenticate()
 
     if (!m_refreshToken.isEmpty())
     {
-        // Treat as initial sign-in via saved refresh token
         refreshAccessToken(true);
         return;
     }
@@ -113,9 +313,128 @@ void AuthManager::authenticate()
     if (!startCallbackServer())
         return;
 
+    QString challenge, state;
+    generatePkceAndState(challenge, state);
+
     QString url = buildAuthUrl();
     QDesktopServices::openUrl(QUrl(url));
     emit authCodeRequired(url);
+}
+
+void AuthManager::refreshAccessToken(bool isInitialLogin)
+{
+    if (m_isRefreshing)
+    {
+        Logger::instance().info("Token refresh already in progress, skipping duplicate request.");
+        return;
+    }
+
+    if (m_refreshToken.isEmpty())
+    {
+        emit authFailed("No refresh token available");
+        return;
+    }
+
+    m_isRefreshing = true;
+
+    QUrl url("https://oauth2.googleapis.com/token");
+    QNetworkRequest req(url);
+    req.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
+    req.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
+
+    QUrlQuery body;
+    body.addQueryItem("client_id", m_clientId);
+    body.addQueryItem("client_secret", m_clientSecret);
+    body.addQueryItem("refresh_token", m_refreshToken);
+    body.addQueryItem("grant_type", "refresh_token");
+
+    auto *reply = m_net->post(req, body.toString(QUrl::FullyEncoded).toUtf8());
+    connect(reply, &QNetworkReply::finished, this, [this, reply, isInitialLogin]()
+            {
+                reply->deleteLater();
+                m_isRefreshing = false;
+
+                auto responseBody = reply->readAll();
+                if (reply->error() != QNetworkReply::NoError)
+                {
+                    auto doc = QJsonDocument::fromJson(responseBody);
+                    QString oauthError = doc.object()["error"].toString();
+
+                    if (oauthError == "invalid_grant" || oauthError == "unauthorized_client")
+                    {
+                        signOut();
+                        emit authFailed("Session expired. Please sign in again.");
+                    }
+                    else
+                    {
+                        emit authFailed("Network error refreshing token: " + reply->errorString());
+                    }
+                    return;
+                }
+
+                auto doc = QJsonDocument::fromJson(responseBody);
+                auto obj = doc.object();
+                QString access = obj["access_token"].toString();
+                int expiresIn = obj["expires_in"].toInt();
+                storeTokens(access, QString(), expiresIn);
+
+                Logger::instance().info(QString("OAuth token renewed. Valid for %1 seconds.").arg(expiresIn));
+
+                emit tokenRefreshed();
+
+                if (isInitialLogin)
+                {
+                    emit authSuccess("Signed in to Google AI Studio.");
+                }
+            });
+}
+
+void AuthManager::exchangeCodeForTokens(const QString &code)
+{
+    QUrl url("https://oauth2.googleapis.com/token");
+    QNetworkRequest req(url);
+    req.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
+    req.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
+
+    QUrlQuery body;
+    body.addQueryItem("code", code);
+    body.addQueryItem("client_id", m_clientId);
+    body.addQueryItem("client_secret", m_clientSecret);
+    body.addQueryItem("redirect_uri", m_redirectUri);
+    body.addQueryItem("grant_type", "authorization_code");
+
+    // PKCE verification
+    body.addQueryItem("code_verifier", m_codeVerifier);
+
+    auto *reply = m_net->post(req, body.toString(QUrl::FullyEncoded).toUtf8());
+    connect(reply, &QNetworkReply::finished, this, [this, reply]()
+            {
+                m_codeVerifier.clear();
+                m_oauthState.clear();
+
+                reply->deleteLater();
+                auto responseBody = reply->readAll();
+                if (reply->error() != QNetworkReply::NoError)
+                {
+                    QString errMsg = "Token exchange failed: " + reply->errorString();
+                    auto doc = QJsonDocument::fromJson(responseBody);
+                    if (!doc.isNull() && doc.object().contains("error"))
+                        errMsg += "\n" + doc.object()["error_description"].toString();
+                    emit authFailed(errMsg);
+                    return;
+                }
+
+                stopCallbackServer();
+
+                auto doc = QJsonDocument::fromJson(responseBody);
+                auto obj = doc.object();
+                QString access = obj["access_token"].toString();
+                QString refresh = obj["refresh_token"].toString();
+                int expiresIn = obj["expires_in"].toInt();
+
+                storeTokens(access, refresh, expiresIn);
+                emit authSuccess("Signed in to Google AI Studio.");
+            });
 }
 
 bool AuthManager::startCallbackServer()
@@ -190,6 +509,15 @@ void AuthManager::handleCallbackRequest(QTcpSocket *socket, const QByteArray &re
     QUrlQuery query(QUrl(QStringLiteral("http://localhost") + target).query());
     QString error = query.queryItemValue("error");
     QString code = query.queryItemValue("code");
+    QString returnedState = query.queryItemValue("state");
+
+    // CSRF state check
+    if (returnedState.isEmpty() || returnedState != m_oauthState)
+    {
+        emit authFailed("OAuth security check failed: CSRF state mismatch.");
+        sendHtmlResponse(socket);
+        return;
+    }
 
     if (!error.isEmpty())
         emit authFailed("OAuth error from provider: " + error);
@@ -220,180 +548,4 @@ void AuthManager::sendHtmlResponse(QTcpSocket *socket)
 void AuthManager::submitAuthCode(const QString &code)
 {
     exchangeCodeForTokens(code);
-}
-
-void AuthManager::refreshAccessToken(bool isInitialLogin)
-{
-    if (m_isRefreshing)
-    {
-        Logger::instance().info("Token refresh already in progress, skipping duplicate request.");
-        return;
-    }
-
-    if (m_refreshToken.isEmpty())
-    {
-        emit authFailed("No refresh token available");
-        return;
-    }
-
-    m_isRefreshing = true;
-
-    QUrl url("https://oauth2.googleapis.com/token");
-    QNetworkRequest req(url);
-    req.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
-    req.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
-
-    QUrlQuery body;
-    body.addQueryItem("client_id", m_clientId);
-    body.addQueryItem("client_secret", m_clientSecret);
-    body.addQueryItem("refresh_token", m_refreshToken);
-    body.addQueryItem("grant_type", "refresh_token");
-
-    auto *reply = m_net->post(req, body.toString(QUrl::FullyEncoded).toUtf8());
-    connect(reply, &QNetworkReply::finished, this, [this, reply, isInitialLogin]()
-            {
-                reply->deleteLater();
-                m_isRefreshing = false;
-
-                auto responseBody = reply->readAll();
-                if (reply->error() != QNetworkReply::NoError)
-                {
-                    auto doc = QJsonDocument::fromJson(responseBody);
-                    QString oauthError = doc.object()["error"].toString();
-
-                    // Only revoke credentials if Google explicitly rejects the refresh token (e.g. invalid_grant)
-                    // If it was just a network timeout/offline error, keep the tokens so it can retry later.
-                    if (oauthError == "invalid_grant" || oauthError == "unauthorized_client")
-                    {
-                        signOut();
-                        emit authFailed("Session expired. Please sign in again.");
-                    }
-                    else
-                    {
-                        emit authFailed("Network error refreshing token: " + reply->errorString());
-                    }
-                    return;
-                }
-
-                auto doc = QJsonDocument::fromJson(responseBody);
-                auto obj = doc.object();
-                QString access = obj["access_token"].toString();
-                int expiresIn = obj["expires_in"].toInt();
-                storeTokens(access, QString(), expiresIn);
-
-                Logger::instance().info(QString("OAuth token renewed. Valid for %1 seconds.").arg(expiresIn));
-
-                // Always notify services (DriveApi, SyncMgr) that new token is ready
-                emit tokenRefreshed();
-
-                // ONLY notify UI to do full startup/folder listing on initial login!
-                if (isInitialLogin)
-                {
-                    emit authSuccess("Signed in to Google AI Studio.");
-                }
-            });
-}
-
-void AuthManager::signOut()
-{
-    stopCallbackServer();
-    m_accessToken.clear();
-    m_refreshToken.clear();
-    m_expiresIn = 0;
-    m_tokenAcquiredAt = QDateTime();
-    auto *app = qobject_cast<Application *>(qApp);
-    if (app)
-    {
-        QSettings &s = app->settings();
-        s.remove("auth/refresh_token");
-        s.remove("auth/access_token");
-        s.remove("auth/expires_in");
-        s.remove("auth/token_acquired_at");
-        s.sync();
-    }
-}
-
-void AuthManager::exchangeCodeForTokens(const QString &code)
-{
-    QUrl url("https://oauth2.googleapis.com/token");
-    QNetworkRequest req(url);
-    req.setHeader(QNetworkRequest::ContentTypeHeader, "application/x-www-form-urlencoded");
-    req.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
-
-    QUrlQuery body;
-    body.addQueryItem("code", code);
-    body.addQueryItem("client_id", m_clientId);
-    body.addQueryItem("client_secret", m_clientSecret);
-    body.addQueryItem("redirect_uri", m_redirectUri);
-    body.addQueryItem("grant_type", "authorization_code");
-
-    auto *reply = m_net->post(req, body.toString(QUrl::FullyEncoded).toUtf8());
-    connect(reply, &QNetworkReply::finished, this, [this, reply]()
-            {
-                reply->deleteLater();
-                auto responseBody = reply->readAll();
-                if (reply->error() != QNetworkReply::NoError)
-                {
-                    QString errMsg = "Token exchange failed: " + reply->errorString();
-                    auto doc = QJsonDocument::fromJson(responseBody);
-                    if (!doc.isNull() && doc.object().contains("error"))
-                        errMsg += "\n" + doc.object()["error_description"].toString();
-                    emit authFailed(errMsg);
-                    return;
-                }
-
-                stopCallbackServer();
-
-                auto doc = QJsonDocument::fromJson(responseBody);
-                auto obj = doc.object();
-                QString access = obj["access_token"].toString();
-                QString refresh = obj["refresh_token"].toString();
-                int expiresIn = obj["expires_in"].toInt();
-                storeTokens(access, refresh, expiresIn);
-                emit authSuccess(formatExpiryMessage("Authenticated.", expiresIn));
-            });
-}
-
-void AuthManager::storeTokens(const QString &access, const QString &refresh, int expiresIn)
-{
-    m_accessToken = access;
-    m_expiresIn = expiresIn;
-    m_tokenAcquiredAt = QDateTime::currentDateTimeUtc();
-
-    if (!refresh.isEmpty())
-        m_refreshToken = refresh;
-
-    auto *app = qobject_cast<Application *>(qApp);
-    if (app)
-    {
-        QSettings &s = app->settings();
-        s.setValue("auth/access_token", m_accessToken);
-        s.setValue("auth/expires_in", m_expiresIn);
-        s.setValue("auth/token_acquired_at", m_tokenAcquiredAt.toString(Qt::ISODate));
-        if (!refresh.isEmpty())
-            s.setValue("auth/refresh_token", m_refreshToken);
-        s.sync();
-    }
-}
-
-QString AuthManager::buildAuthUrl() const
-{
-    QUrlQuery query;
-    query.addQueryItem("client_id", m_clientId);
-    query.addQueryItem("redirect_uri", m_redirectUri);
-    query.addQueryItem("response_type", "code");
-    query.addQueryItem("scope", m_scopes.join(' '));
-    query.addQueryItem("access_type", "offline");
-    query.addQueryItem("prompt", "consent");
-
-    QUrl url("https://accounts.google.com/o/oauth2/v2/auth");
-    url.setQuery(query);
-    return url.toString();
-}
-
-QString AuthManager::formatExpiryMessage(const QString &prefix, int expiresInSec) const
-{
-    int hours = expiresInSec / 3600;
-    int mins = (expiresInSec % 3600) / 60;
-    return QString("%1 Token expires in %2h %3m.").arg(prefix).arg(hours).arg(mins);
 }

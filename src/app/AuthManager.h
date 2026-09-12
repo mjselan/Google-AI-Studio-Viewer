@@ -7,6 +7,7 @@
 #include <QDateTime>
 #include <QHash>
 
+
 class QTcpServer;
 class QTcpSocket;
 
@@ -44,6 +45,17 @@ private:
     void storeTokens(const QString &access, const QString &refresh, int expiresIn);
     void loadSavedTokens();
     QString buildAuthUrl() const;
+    void stopCallbackServer();
+
+    // --- PKCE & CSRF State (Item #1) ---
+    void generatePkceAndState(QString &outChallenge, QString &outState);
+    QString m_oauthState;
+    QString m_codeVerifier;
+
+    // --- Cross-Platform OS Vault Helpers (Item #2) ---
+    void writeTokenToVault(const QString &key, const QString &value);
+    QString readTokenFromVault(const QString &key);
+    void deleteTokenFromVault(const QString &key);
 
     QNetworkAccessManager *m_net;
     QTcpServer *m_callbackServer = nullptr;
@@ -59,6 +71,4 @@ private:
     int m_expiresIn = 0;
     QDateTime m_tokenAcquiredAt;
     bool m_isRefreshing = false;
-    QString formatExpiryMessage(const QString &prefix, int expiresInSec) const;
-    void stopCallbackServer();
 };

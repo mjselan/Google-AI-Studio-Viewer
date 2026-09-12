@@ -125,20 +125,37 @@ void ResponsePane::appendModelResponse(const QString &text, bool isThought, bool
     QString html;
     QString processedText = applySearchHighlight(markdownToHtml(text));
 
-    // Item #8: Case-insensitive check for error messages
+    // Detect if the user is in Dark Mode or Light Mode
+    bool isDark = m_browser->palette().color(QPalette::Base).lightnessF() < 0.5;
+
     if (text.startsWith("ERROR:", Qt::CaseInsensitive) || text.startsWith("Error:", Qt::CaseInsensitive))
     {
-        html = "<div style='background:#fff3cd; border:1px solid #ffc107; border-radius:4px; padding:8px; margin:4px 0;'>"
-               "<b>&#x26A0; Error / Unsupported Content:</b><br>" + processedText + "</div>";
+        QString errBg = isDark ? "#4a3b00" : "#fff3cd";
+        QString errBorder = isDark ? "#ffc107" : "#ffc107";
+        QString errColor = isDark ? "#ffe082" : "#856404";
+        html = QString("<div style='background:%1; color:%2; border:1px solid %3; border-radius:4px; padding:8px; margin:4px 0;'>"
+                       "<b>&#x26A0; Error / Unsupported Content:</b><br>%4</div>")
+                   .arg(errBg, errColor, errBorder, processedText);
     }
     else if (isThought)
     {
-        html = "<div style='background:#f0f0f0; border-left:3px solid #888; padding:8px; margin:4px 0;'>"
-               "<i>Thought:</i><br>" + processedText + "</div>";
+        // Dark theme: charcoal box (#252526) with crisp light-gray text (#d4d4d4) and blue accent border
+        // Light theme: soft gray box (#f0f0f0) with dark charcoal text (#333333)
+        QString thoughtBg     = isDark ? "#252526" : "#f0f0f0";
+        QString thoughtColor  = isDark ? "#d4d4d4" : "#333333";
+        QString thoughtBorder = isDark ? "#0078d4" : "#888888";
+        QString labelColor    = isDark ? "#858585" : "#666666";
+
+        html = QString("<div style='background:%1; color:%2; border-left:3px solid %3; border-radius:4px; padding:8px 12px; margin:6px 0;'>"
+                       "<div style='font-style:italic; font-size:11px; color:%4; margin-bottom:4px;'>Thought:</div>"
+                       "<div style='color:%2;'>%5</div></div>")
+                   .arg(thoughtBg, thoughtColor, thoughtBorder, labelColor, processedText);
     }
     else
     {
-        html = "<div style='padding:8px; margin:4px 0;'>" + processedText + "</div>";
+        QString textColor = isDark ? "#e0e0e0" : "#1e1e1e";
+        html = QString("<div style='color:%1; padding:8px; margin:4px 0;'>%2</div>")
+                   .arg(textColor, processedText);
     }
 
     m_browser->append(html);

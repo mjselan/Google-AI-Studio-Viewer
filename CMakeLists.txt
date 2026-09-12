@@ -10,6 +10,19 @@ set(CMAKE_AUTORCC ON)
 
 find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets Network Sql)
 
+# --- QtKeychain via FetchContent ---
+include(FetchContent)
+set(BUILD_WITH_QT6 ON CACHE BOOL "" FORCE)
+set(BUILD_TEST_APPLICATION OFF CACHE BOOL "" FORCE)
+set(BUILD_TRANSLATIONS OFF CACHE BOOL "" FORCE)
+
+FetchContent_Declare(
+    qtkeychain
+    GIT_REPOSITORY https://github.com/frankosterfeld/qtkeychain.git
+    GIT_TAG        0.15.0   # Must not have 'v'
+)
+FetchContent_MakeAvailable(qtkeychain)
+
 set(SOURCES
     src/main.cpp
     src/app/Application.cpp
@@ -19,6 +32,7 @@ set(SOURCES
     src/api/CopilotApi.cpp
     src/api/ConversationModel.cpp
     src/api/LocalCache.cpp
+    src/api/conversationsyncmanager.cpp
     src/models/Conversation.cpp
     src/models/Message.cpp
     src/models/FileAttachment.cpp
@@ -38,6 +52,7 @@ set(HEADERS
     src/api/CopilotApi.h
     src/api/ConversationModel.h
     src/api/LocalCache.h
+    src/api/conversationsyncmanager.h
     src/models/Conversation.h
     src/models/Message.h
     src/models/FileAttachment.h
@@ -53,7 +68,6 @@ qt_add_executable(${PROJECT_NAME}
     MANUAL_FINALIZATION
     ${SOURCES}
     ${HEADERS}
-    src/api/conversationsyncmanager.h src/api/conversationsyncmanager.cpp
 )
 
 if(WIN32)
@@ -67,14 +81,22 @@ elseif(APPLE)
         MACOSX_BUNDLE_GUI_IDENTIFIER "com.googleai.viewer")
 endif()
 
+# Link Qt6 and QtKeychain
 target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::Core
     Qt6::Gui
     Qt6::Widgets
     Qt6::Network
     Qt6::Sql
+    qt6keychain
 )
 
-target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
+# Tell the compiler where to find keychain.h and the generated qkeychain_export.h
+target_include_directories(${PROJECT_NAME} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src
+    ${qtkeychain_SOURCE_DIR}
+    ${qtkeychain_SOURCE_DIR}/qtkeychain
+    ${qtkeychain_BINARY_DIR}
+)
 
 qt_finalize_executable(${PROJECT_NAME})

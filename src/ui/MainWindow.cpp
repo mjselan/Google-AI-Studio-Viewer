@@ -641,6 +641,8 @@ void MainWindow::onSignIn()
         QFile f(configPath);
         if (f.open(QIODevice::WriteOnly))
         {
+            // Restrict file access to current user only (Item #2)
+            f.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
             QJsonObject installed;
             installed["client_id"] = clientId.trimmed();
             installed["client_secret"] = clientSecret.trimmed();
