@@ -33,12 +33,10 @@ src/
 │   └── Message               # A single chunk (user/model turn), parsed from AI Studio JSON
 ├── ui/             # Qt Widgets UI
 │   ├── ConversationListPane  # Left-hand list of conversations from Drive
-│   ├── FilePreviewWidget     # Preview pane for attachments
 │   ├── ImageViewerDialog     # Full-size image viewer
 │   ├── MainWindow            # Top-level window, wires together auth/API/UI
 │   ├── PromptListPane         # List of prompts within the open conversation
-│   ├── ResponsePane           # Renders a prompt/response pair (markdown, images, attachments)
-│   └── SearchDialog            # Debounced search dialog over Drive conversations
+│   └── ResponsePane           # Renders a prompt/response pair (markdown, images, attachments)
 └── main.cpp        # Entry point
 ```
 
