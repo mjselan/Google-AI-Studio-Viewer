@@ -2,6 +2,7 @@
 
 #include <QObject>
 #include <QString>
+#include <QStringList>
 #include <QJsonObject>
 #include <QNetworkAccessManager>
 #include <QDateTime>

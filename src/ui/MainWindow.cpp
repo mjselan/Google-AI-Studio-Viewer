@@ -7,7 +7,7 @@
 #include "api/CopilotApi.h"
 #include "api/ConversationModel.h"
 #include "api/LocalCache.h"
-#include "api/ConversationSyncManager.h"
+#include "api/conversationsyncmanager.h"
 #include "models/Conversation.h"
 #include "app/Logger.h"
 #include <QMessageBox>

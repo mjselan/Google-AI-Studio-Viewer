@@ -1,4 +1,4 @@
-#include "ConversationSyncManager.h"
+#include "conversationsyncmanager.h"
 #include "app/Logger.h"
 #include <QJsonDocument>
 #include <QJsonObject>

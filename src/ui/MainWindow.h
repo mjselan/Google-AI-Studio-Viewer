@@ -12,6 +12,8 @@
 #include <QWidget>
 #include <QHBoxLayout>
 #include <QTimer>
+#include <QList>
+#include <QSet>
 #include "models/Conversation.h"
 #include "api/LocalCache.h"
 
