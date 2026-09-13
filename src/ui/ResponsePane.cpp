@@ -94,14 +94,16 @@ QString ResponsePane::applySearchHighlight(const QString &html) const
 }
 
 void ResponsePane::showResponse(const Conversation::PromptResponsePair &pair,
-                                bool showThoughts, DriveApi *drive)
+                                bool showThoughts, bool showAttachments, DriveApi *drive)
 {
     m_currentPair = pair;
     m_showThoughts = showThoughts;
+    m_showAttachments = showAttachments;
     m_drive = drive;
 
     QString docId = pair.prompt.driveDocumentId;
-    if (!docId.isEmpty() && !m_attachmentCache.contains(docId) && !m_pendingDownloads.contains(docId))
+    // Only trigger download if attachments are enabled
+    if (m_showAttachments && !docId.isEmpty() && !m_attachmentCache.contains(docId) && !m_pendingDownloads.contains(docId))
     {
         requestAttachment(docId, drive);
     }
@@ -119,11 +121,22 @@ void ResponsePane::render()
     QString promptHtml = applySearchHighlight(markdownToHtml(m_currentPair.prompt.text));
     QString html = "<h3>Prompt</h3><div style='padding:8px; margin:4px 0;'>" + promptHtml + "</div>";
 
-    // Render Attachment right inside the Prompt section
+    // --- Attachment Handling ---
     QString docId = m_currentPair.prompt.driveDocumentId;
     if (!docId.isEmpty())
     {
-        if (m_attachmentCache.contains(docId))
+        if (!m_showAttachments)
+        {
+            // Compact pill badge when unchecked
+            QString badgeBg = isDark ? "#2a2a2a" : "#f1f3f5";
+            QString badgeBorder = isDark ? "#3c3c3c" : "#d0d7de";
+            QString badgeColor = isDark ? "#888888" : "#666666";
+
+            html += QString("<div style='background:%1; color:%2; border:1px dashed %3; border-radius:4px; padding:6px 10px; margin:6px 0; font-size:11px;'>"
+                            "&#x1F4CE; <i>[Attached file hidden — check 'Show Attachments' to view]</i></div>")
+                        .arg(badgeBg, badgeColor, badgeBorder);
+        }
+        else if (m_attachmentCache.contains(docId))
         {
             auto att = m_attachmentCache[docId];
             html += formatAttachmentHtml(att.first, att.second, docId);
@@ -138,18 +151,21 @@ void ResponsePane::render()
         }
     }
 
-    // Inline images attached to prompt
-    if (!m_currentPair.prompt.inlineImages.isEmpty())
+    // --- Inline Images ---
+    if (m_showAttachments)
     {
-        for (int i = 0; i < m_currentPair.prompt.inlineImages.size(); ++i)
+        if (!m_currentPair.prompt.inlineImages.isEmpty())
         {
-            const auto &img = m_currentPair.prompt.inlineImages[i];
-            appendInlineImage(img.data, img.mimeType, i);
+            for (int i = 0; i < m_currentPair.prompt.inlineImages.size(); ++i)
+            {
+                const auto &img = m_currentPair.prompt.inlineImages[i];
+                appendInlineImage(img.data, img.mimeType, i);
+            }
         }
-    }
-    else if (!m_currentPair.prompt.inlineImageData.isEmpty())
-    {
-        appendInlineImage(m_currentPair.prompt.inlineImageData, m_currentPair.prompt.inlineImageMime, 0);
+        else if (!m_currentPair.prompt.inlineImageData.isEmpty())
+        {
+            appendInlineImage(m_currentPair.prompt.inlineImageData, m_currentPair.prompt.inlineImageMime, 0);
+        }
     }
 
     html += "<hr style='border:none; border-top:1px solid " + hrColor + "; margin:12px 0;'>";

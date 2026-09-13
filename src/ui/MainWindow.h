@@ -44,6 +44,7 @@ private slots:
     void onConversationSelected(int index);
     void onPromptSelected(int pairIndex);
     void onToggleThoughts(bool visible);
+    void onToggleAttachments(bool checked);
     void onSortChanged(int index);
     void onBackendChanged(int index);
     void onSendPrompt();
@@ -85,6 +86,7 @@ private:
     QComboBox *m_backendCombo;
     QLineEdit *m_searchInput;
     QCheckBox *m_includeAttachmentsCheck;
+    QCheckBox *m_showAttachmentsCheck = nullptr;
     QTimer *m_searchTimer;
 
     QWidget *m_chatBar;

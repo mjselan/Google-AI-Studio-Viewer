@@ -19,7 +19,7 @@ public:
     explicit ResponsePane(QWidget *parent = nullptr);
 
     void showResponse(const Conversation::PromptResponsePair &pair,
-                      bool showThoughts, DriveApi *drive);
+                      bool showThoughts, bool showAttachments = true, DriveApi *drive = nullptr);
     void setSearchTerm(const QString &term);
     void clear();
 
@@ -38,6 +38,7 @@ private:
 
     Conversation::PromptResponsePair m_currentPair;
     bool m_showThoughts = false;
+    bool m_showAttachments = true;
     DriveApi *m_drive = nullptr;
 
     // Cache downloaded attachments in memory (fileId -> {data, mimeType})

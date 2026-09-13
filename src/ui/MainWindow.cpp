@@ -370,6 +370,14 @@ void MainWindow::setupToolbar()
 
     m_toolbar->addSeparator();
 
+    // "Show Attachments" Checkbox (checked by default)
+    m_showAttachmentsCheck = new QCheckBox("Show Attachments", this);
+    m_showAttachmentsCheck->setChecked(true);
+    m_showAttachmentsCheck->setToolTip("Toggle displaying files and images inline in the prompt");
+    m_toolbar->addWidget(m_showAttachmentsCheck);
+
+    connect(m_showAttachmentsCheck, &QCheckBox::toggled, this, &MainWindow::onToggleAttachments);
+
     m_toggleThoughts = m_toolbar->addAction("Show Thoughts");
     m_toggleThoughts->setCheckable(true);
     m_toggleThoughts->setChecked(false);
@@ -763,7 +771,7 @@ void MainWindow::onConversationSelected(int index)
         m_promptPane->setConversation(attConv);
 
         bool showThoughts = m_toggleThoughts->isChecked();
-        m_responsePane->showResponse(pair, showThoughts, m_drive);
+        m_responsePane->showResponse(pair, showThoughts, m_showAttachmentsCheck->isChecked(), m_drive);
 
         statusBar()->showMessage(QString("Attachment: %1").arg(conv.fileName));
         return;
@@ -799,8 +807,20 @@ void MainWindow::onPromptSelected(int pairIndex)
 
     const auto &pair = conv.pairs.at(pairIndex);
     bool showThoughts = m_toggleThoughts->isChecked();
+    bool showAttachments = m_showAttachmentsCheck->isChecked();
 
-    m_responsePane->showResponse(pair, showThoughts, m_drive);
+    m_responsePane->showResponse(pair, showThoughts, showAttachments, m_drive);
+}
+
+void MainWindow::onToggleAttachments(bool checked)
+{
+    Q_UNUSED(checked)
+    if (indexForFileId() >= 0)
+    {
+        int promptIndex = m_promptPane->currentIndex();
+        if (promptIndex >= 0)
+            onPromptSelected(promptIndex);
+    }
 }
 
 void MainWindow::onToggleThoughts(bool visible)
