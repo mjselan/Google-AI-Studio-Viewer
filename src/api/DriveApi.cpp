@@ -57,6 +57,7 @@ void DriveApi::sendGet(const QString &urlStr, std::function<void(const QJsonObje
     QNetworkRequest req(qurl);
     req.setRawHeader("Authorization", ("Bearer " + m_token).toUtf8());
     req.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
+    req.setTransferTimeout(30000); // 30s timeout
 
     auto *reply = m_net->get(req);
     handleReply(reply, callback);
@@ -206,6 +207,7 @@ void DriveApi::downloadConversation(const QString &fileId, const QString &fileNa
     QNetworkRequest req(url);
     req.setRawHeader("Authorization", ("Bearer " + m_token).toUtf8());
     req.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
+    req.setTransferTimeout(30000); // 30s timeout
 
     auto *reply = m_net->get(req);
     connect(reply, &QNetworkReply::finished, this, [this, reply, fileId, fileName]()
@@ -222,7 +224,13 @@ void DriveApi::downloadConversation(const QString &fileId, const QString &fileNa
                         emit conversationDownloaded(fileId, fileName, data);
                     };
                     m_pendingRequests.append(pending);
-                    emit tokenNeedsRefresh();
+
+                    // Respect the refresh guard
+                    if (!m_refreshInProgress)
+                    {
+                        m_refreshInProgress = true;
+                        emit tokenNeedsRefresh();
+                    }
                     return;
                 }
 
@@ -243,6 +251,10 @@ void DriveApi::downloadAttachment(const QString &fileId)
     req.setRawHeader("Authorization", ("Bearer " + m_token).toUtf8());
     req.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
 
+    // CRITICAL: Follow Google Drive's 302/303 redirect to googleusercontent.com
+    req.setAttribute(QNetworkRequest::RedirectPolicyAttribute, QNetworkRequest::NoLessSafeRedirectPolicy);
+    req.setTransferTimeout(30000); // 30s timeout
+
     auto *reply = m_net->get(req);
     connect(reply, &QNetworkReply::finished, this, [this, reply, fileId]()
             {
@@ -256,7 +268,12 @@ void DriveApi::downloadAttachment(const QString &fileId)
                     pending.binary = true;
                     pending.callback = [this, fileId](const QJsonObject &) { downloadAttachment(fileId); };
                     m_pendingRequests.append(pending);
-                    emit tokenNeedsRefresh();
+
+                    if (!m_refreshInProgress)
+                    {
+                        m_refreshInProgress = true;
+                        emit tokenNeedsRefresh();
+                    }
                     return;
                 }
 

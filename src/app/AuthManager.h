@@ -28,8 +28,8 @@ public:
     void refreshAccessToken(bool isInitialLogin = false);
     void signOut();
     void submitAuthCode(const QString &code);
-
     QString redirectUri() const { return m_redirectUri; }
+    bool canAutoAuthenticate() const { return !m_accessToken.isEmpty() || !m_refreshToken.isEmpty(); }
 
 signals:
     void authSuccess(const QString &message);

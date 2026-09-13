@@ -27,6 +27,7 @@ public:
     void cancelSync();
     bool isSyncing() const { return m_syncing; }
 
+
 signals:
     void syncStarted(int totalToDownload);
     void syncProgress(int completed, int total, const QString &currentFileName);

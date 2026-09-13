@@ -63,58 +63,187 @@ void ResponsePane::setSearchTerm(const QString &term)
     m_searchTerm = term.trimmed();
 }
 
-QString ResponsePane::applySearchHighlight(const QString &text) const
+QString ResponsePane::applySearchHighlight(const QString &html) const
 {
     if (m_searchTerm.isEmpty())
-        return text;
+        return html;
 
-    QRegularExpression re(QRegularExpression::escape(m_searchTerm),
+    QString escapedTerm = m_searchTerm.toHtmlEscaped();
+    QRegularExpression re(QString("(<[^>]*>)|(%1)").arg(QRegularExpression::escape(escapedTerm)),
                           QRegularExpression::CaseInsensitiveOption);
-    return QString(text).replace(re, "<mark style='background:#ffe066; color:#000;'>\\0</mark>");
+
+    QString result;
+    int lastIndex = 0;
+    auto it = re.globalMatch(html);
+    while (it.hasNext())
+    {
+        auto match = it.next();
+        result.append(html.mid(lastIndex, match.capturedStart() - lastIndex));
+        if (match.capturedStart(1) != -1)
+        {
+            result.append(match.captured(1));
+        }
+        else
+        {
+            result.append("<mark style='background:#ffe066; color:#000;'>" + match.captured(2) + "</mark>");
+        }
+        lastIndex = match.capturedEnd();
+    }
+    result.append(html.mid(lastIndex));
+    return result;
 }
 
 void ResponsePane::showResponse(const Conversation::PromptResponsePair &pair,
                                 bool showThoughts, DriveApi *drive)
 {
-    if (m_attachmentConn)
-        disconnect(m_attachmentConn);
-    m_attachmentConn = QMetaObject::Connection();
+    m_currentPair = pair;
+    m_showThoughts = showThoughts;
+    m_drive = drive;
 
-    m_browser->clear();
-
-    QString promptHtml = applySearchHighlight(markdownToHtml(pair.prompt.text));
-
-    m_browser->setHtml(
-        "<h3>Prompt</h3><div style='padding:8px; margin:4px 0;'>"
-        + promptHtml + "</div><hr>");
-
-    if (!pair.prompt.driveDocumentId.isEmpty())
+    QString docId = pair.prompt.driveDocumentId;
+    if (!docId.isEmpty() && !m_attachmentCache.contains(docId) && !m_pendingDownloads.contains(docId))
     {
-        requestAttachment(pair.prompt.driveDocumentId, drive);
+        requestAttachment(docId, drive);
     }
 
-    if (!pair.prompt.inlineImages.isEmpty())
+    render();
+}
+
+void ResponsePane::render()
+{
+    m_browser->clear();
+
+    bool isDark = m_browser->palette().color(QPalette::Base).lightnessF() < 0.5;
+    QString hrColor = isDark ? "#444444" : "#cccccc";
+
+    QString promptHtml = applySearchHighlight(markdownToHtml(m_currentPair.prompt.text));
+    QString html = "<h3>Prompt</h3><div style='padding:8px; margin:4px 0;'>" + promptHtml + "</div>";
+
+    // Render Attachment right inside the Prompt section
+    QString docId = m_currentPair.prompt.driveDocumentId;
+    if (!docId.isEmpty())
     {
-        for (int i = 0; i < pair.prompt.inlineImages.size(); ++i)
+        if (m_attachmentCache.contains(docId))
         {
-            const auto &img = pair.prompt.inlineImages[i];
+            auto att = m_attachmentCache[docId];
+            html += formatAttachmentHtml(att.first, att.second, docId);
+        }
+        else
+        {
+            QString boxBg = isDark ? "#2a2a2a" : "#f4f4f4";
+            QString boxColor = isDark ? "#888888" : "#666666";
+            html += QString("<div style='background:%1; color:%2; border-radius:4px; padding:8px; margin:6px 0; font-style:italic;'>"
+                            "&#x2935; [Downloading attachment %3...]</div>")
+                        .arg(boxBg, boxColor, docId.toHtmlEscaped());
+        }
+    }
+
+    // Inline images attached to prompt
+    if (!m_currentPair.prompt.inlineImages.isEmpty())
+    {
+        for (int i = 0; i < m_currentPair.prompt.inlineImages.size(); ++i)
+        {
+            const auto &img = m_currentPair.prompt.inlineImages[i];
             appendInlineImage(img.data, img.mimeType, i);
         }
     }
-    else if (!pair.prompt.inlineImageData.isEmpty())
+    else if (!m_currentPair.prompt.inlineImageData.isEmpty())
     {
-        appendInlineImage(pair.prompt.inlineImageData, pair.prompt.inlineImageMime, 0);
+        appendInlineImage(m_currentPair.prompt.inlineImageData, m_currentPair.prompt.inlineImageMime, 0);
     }
 
-    for (const auto &resp : pair.responses)
+    html += "<hr style='border:none; border-top:1px solid " + hrColor + "; margin:12px 0;'>";
+    m_browser->setHtml(html);
+
+    // Render Model Responses below the prompt
+    for (const auto &resp : m_currentPair.responses)
     {
-        appendModelResponse(resp.text, resp.isThought, showThoughts);
+        appendModelResponse(resp.text, resp.isThought, m_showThoughts);
     }
 
-    if (pair.responses.isEmpty())
+    if (m_currentPair.responses.isEmpty())
         m_browser->append("<p><i>No response yet.</i></p>");
 
     m_browser->verticalScrollBar()->setValue(0);
+}
+
+void ResponsePane::requestAttachment(const QString &fileId, DriveApi *drive)
+{
+    if (!drive)
+        return;
+
+    m_pendingDownloads.insert(fileId);
+
+    if (m_attachmentConn)
+        disconnect(m_attachmentConn);
+
+    m_attachmentConn = connect(drive, &DriveApi::attachmentDownloaded, this,
+                               [this](const QString &id, const QByteArray &data, const QString &mimeType)
+                               {
+                                   m_pendingDownloads.remove(id);
+                                   m_attachmentCache[id] = qMakePair(data, mimeType);
+
+                                   // Re-render immediately so the attachment appears inside the prompt
+                                   if (m_currentPair.prompt.driveDocumentId == id)
+                                   {
+                                       render();
+                                   }
+                               });
+
+    drive->downloadAttachment(fileId);
+}
+
+QString ResponsePane::formatAttachmentHtml(const QByteArray &data, const QString &mimeType, const QString &fileId)
+{
+    bool isDark = m_browser->palette().color(QPalette::Base).lightnessF() < 0.5;
+
+    // 1. Image preview
+    if (mimeType.startsWith("image/"))
+    {
+        QPixmap pix;
+        if (pix.loadFromData(data))
+        {
+            QString url = QString("attachment://%1").arg(fileId);
+            m_browser->document()->addResource(QTextDocument::ImageResource, QUrl(url), fitImageWidth(pix));
+            return QString("<div style='text-align:center; margin:8px 0;'><img src='%1'/></div>").arg(url);
+        }
+        else
+        {
+            return "<p><i>[Attached image could not be decoded]</i></p>";
+        }
+    }
+
+    // 2. Text / Code preview (like codetree.txt)
+    // Check if it's text either by mime or if it contains zero null bytes
+    bool isText = mimeType.startsWith("text/") ||
+                  mimeType.contains("json") ||
+                  mimeType.contains("javascript") ||
+                  mimeType.contains("xml") ||
+                  !data.contains('\0');
+
+    if (isText)
+    {
+        QString codeBg = isDark ? "#1e1e1e" : "#f6f8fa";
+        QString codeBorder = isDark ? "#3c3c3c" : "#d0d7de";
+        QString codeColor = isDark ? "#d4d4d4" : "#24292f";
+        QString headerColor = isDark ? "#858585" : "#57606a";
+
+        QString textContent = QString::fromUtf8(data);
+        QString highlighted = applySearchHighlight(textContent.toHtmlEscaped());
+
+        return QString("<div style='margin:8px 0;'>"
+                       "<div style='font-size:11px; font-weight:bold; color:%1; margin-bottom:4px;'>&#x1F4CE; Attached File:</div>"
+                       "<pre style='background:%2; color:%3; border:1px solid %4; border-radius:4px; padding:10px; font-family:Consolas, Monaco, monospace; font-size:12px; white-space:pre-wrap;'>%5</pre>"
+                       "</div>")
+            .arg(headerColor, codeBg, codeColor, codeBorder, highlighted);
+    }
+
+    // 3. Binary file fallback
+    QString binBg = isDark ? "#252526" : "#f0f0f0";
+    QString binColor = isDark ? "#aaaaaa" : "#555555";
+    return QString("<div style='background:%1; color:%2; border-radius:4px; padding:8px; margin:6px 0;'>"
+                   "&#x1F4CE; <i>Attachment downloaded (%3, %4 bytes) - binary format cannot be previewed inline.</i></div>")
+        .arg(binBg, binColor, mimeType.toHtmlEscaped()).arg(data.size());
 }
 
 void ResponsePane::appendModelResponse(const QString &text, bool isThought, bool showThoughts)
@@ -124,8 +253,6 @@ void ResponsePane::appendModelResponse(const QString &text, bool isThought, bool
 
     QString html;
     QString processedText = applySearchHighlight(markdownToHtml(text));
-
-    // Detect if the user is in Dark Mode or Light Mode
     bool isDark = m_browser->palette().color(QPalette::Base).lightnessF() < 0.5;
 
     if (text.startsWith("ERROR:", Qt::CaseInsensitive) || text.startsWith("Error:", Qt::CaseInsensitive))
@@ -139,8 +266,6 @@ void ResponsePane::appendModelResponse(const QString &text, bool isThought, bool
     }
     else if (isThought)
     {
-        // Dark theme: charcoal box (#252526) with crisp light-gray text (#d4d4d4) and blue accent border
-        // Light theme: soft gray box (#f0f0f0) with dark charcoal text (#333333)
         QString thoughtBg     = isDark ? "#252526" : "#f0f0f0";
         QString thoughtColor  = isDark ? "#d4d4d4" : "#333333";
         QString thoughtBorder = isDark ? "#0078d4" : "#888888";
@@ -159,53 +284,6 @@ void ResponsePane::appendModelResponse(const QString &text, bool isThought, bool
     }
 
     m_browser->append(html);
-}
-
-void ResponsePane::requestAttachment(const QString &fileId, DriveApi *drive)
-{
-    if (!drive)
-        return;
-
-    m_browser->append(
-        QString("<p><i>[Downloading attachment %1...]</i></p>").arg(fileId.toHtmlEscaped()));
-
-    m_attachmentConn = connect(drive, &DriveApi::attachmentDownloaded, this,
-                               [this, fileId](const QString &id, const QByteArray &data, const QString &mimeType)
-                               {
-                                   if (id == fileId)
-                                       insertAttachmentInline(data, mimeType, fileId);
-                               });
-
-    drive->downloadAttachment(fileId);
-}
-
-void ResponsePane::insertAttachmentInline(const QByteArray &data, const QString &mimeType,
-                                          const QString &fileId)
-{
-    if (mimeType.startsWith("image/"))
-    {
-        QPixmap pix;
-        if (pix.loadFromData(data))
-        {
-            QString url = QString("attachment://%1").arg(fileId);
-            m_browser->document()->addResource(QTextDocument::ImageResource, QUrl(url), fitImageWidth(pix));
-            m_browser->append("<div style='text-align:center; margin:6px 0;'><img src='" + url + "'/></div>");
-        }
-        else
-        {
-            m_browser->append("<p><i>Attached image could not be decoded.</i></p>");
-        }
-    }
-    else if (mimeType.startsWith("text/") || mimeType.contains("json") || mimeType.contains("javascript"))
-    {
-        m_browser->append("<h4>Attached file:</h4><pre>" + applySearchHighlight(QString::fromUtf8(data).toHtmlEscaped()) + "</pre>");
-    }
-    else
-    {
-        m_browser->append(
-            QString("<p><i>Attachment downloaded (%1, %2 bytes) but cannot be previewed inline.</i></p>")
-                .arg(mimeType.toHtmlEscaped()).arg(data.size()));
-    }
 }
 
 void ResponsePane::appendInlineImage(const QString &base64data, const QString &mimeType, int index)
@@ -236,4 +314,6 @@ void ResponsePane::clear()
     m_attachmentConn = QMetaObject::Connection();
     m_browser->clear();
     m_searchTerm.clear();
+    m_currentPair = Conversation::PromptResponsePair();
+    m_pendingDownloads.clear();
 }

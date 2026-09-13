@@ -45,5 +45,4 @@ private:
     QSet<QString> m_filterFileIds;
     bool m_hasFilter = false;
     SortMode m_sortMode = NewestFirst;
-    int m_filesPopulated = 0;
 };

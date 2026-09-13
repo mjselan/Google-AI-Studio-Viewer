@@ -119,7 +119,7 @@ void ConversationListPane::clear()
     m_filterFileIds.clear();
     m_hasFilter = false;
     m_list->clear();
-    m_filesPopulated = 0;
+
 }
 
 int ConversationListPane::conversationCount() const

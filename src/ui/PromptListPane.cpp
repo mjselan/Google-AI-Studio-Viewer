@@ -16,7 +16,7 @@ public:
     // File: src/ui/PromptListPane.cpp
 
     void paint(QPainter *painter, const QStyleOptionViewItem &option,
-                             const QModelIndex &index) const
+                             const QModelIndex &index) const override
     {
         QStyleOptionViewItem options = option;
         initStyleOption(&options, index);

@@ -270,6 +270,16 @@ MainWindow::MainWindow(QWidget *parent)
             {
                 m_auth->refreshAccessToken(false); // false = silent background refresh
             });
+    QString userProfilePath = QStandardPaths::writableLocation(QStandardPaths::DocumentsLocation);
+    QString configPath = userProfilePath + "/AI/oauth_config.json";
+    if (QFileInfo::exists(configPath))
+    {
+        m_auth->loadConfig(configPath);
+        if (m_auth->canAutoAuthenticate())
+        {
+            m_auth->authenticate();
+        }
+    }
 }
 
 MainWindow::~MainWindow() {}
@@ -641,7 +651,6 @@ void MainWindow::onSignIn()
         QFile f(configPath);
         if (f.open(QIODevice::WriteOnly))
         {
-            // Restrict file access to current user only (Item #2)
             f.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
             QJsonObject installed;
             installed["client_id"] = clientId.trimmed();
@@ -653,13 +662,8 @@ void MainWindow::onSignIn()
         }
     }
 
-    if (!m_auth->isAuthenticated())
-        m_auth->authenticate();
-    else
-    {
-        m_drive->setAccessToken(m_auth->accessToken());
-        m_drive->findFolder("Google AI Studio");
-    }
+    // Always call authenticate() — it handles valid tokens, token refresh, and browser login
+    m_auth->authenticate();
 }
 
 void MainWindow::onSignOut()
