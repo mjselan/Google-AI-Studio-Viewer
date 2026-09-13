@@ -1,82 +1,159 @@
 # Google AI Studio Viewer
 
-A native desktop app (Qt6/C++20) for browsing and searching your [Google AI Studio](https://aistudio.google.com/) conversation history.
+A native, high-performance desktop application (Qt6 / C++20) for browsing, searching, and organizing your [Google AI Studio](https://aistudio.google.com/) conversation history.
 
-AI Studio saves your conversations as JSON files in a `Google AI Studio` folder in your Google Drive, but there's no good way to browse or search that history — the web UI's own history panel is slow to scroll and hard to search across many conversations. This app signs in with your Google account, syncs those files down, caches them locally, and gives you a fast, native three-pane viewer with full-text search, image/attachment previews, and dark-mode support.
+Google AI Studio saves prompts and chat sessions as JSON files inside a `Google AI Studio` folder in your Google Drive. However, the web UI lacks fast full-text search across past chats and scrolling through deep histories can be cumbersome. This app connects securely to your Drive via read-only OAuth, syncs your conversations to a local SQLite cache, and provides an instant three-pane native viewer with search, code highlighting, attachment previews, and dark mode support.
 
-Builds and runs on **Linux, macOS, and Windows**.
+Runs natively on **Windows, macOS, and Linux**.
+
+---
 
 ## Features
 
-- **Browse conversations** in a three-pane layout: conversation list → prompt list → rendered response, with markdown rendering for model output
-- **Full-text search** across all synced conversations, backed by a local SQLite cache — search your entire history offline, not just the current file
-- **Background sync** of your Drive folder with progress reporting, retry-on-failure, and automatic token refresh mid-sync
-- **Attachments and inline images** are downloaded and previewed in place (images, text/code, or a binary fallback)
-- **Model "thoughts"** can be toggled on/off separately from the final response
-- **Read-only Google OAuth (PKCE)** — the app only ever requests `drive.readonly` access, and tokens are stored in your OS's native credential store (Windows Credential Manager, macOS Keychain, or Linux Secret Service/KWallet) via [QtKeychain](https://github.com/frankosterfeld/qtkeychain), never in plain text
-- **Optional local-LLM backend** — you can switch the toolbar from "Google AI Studio" to "Local Server", which talks to any OpenAI-compatible chat endpoint (e.g. LM Studio, Ollama, llama.cpp server) at `http://localhost:8000` by default, so the same viewer can also be a lightweight local chat client
+- **Three-Pane Desktop Layout:** Browse conversations on the left, inspect turn-by-turn user prompts in the middle, and read markdown-rendered model responses on the right.
+- **Offline Full-Text Search:** Instantly search across conversation titles, user prompts, system instructions, and model responses backed by a local SQLite index.
+- **Attachment Search & Parent Linking:** When "Search all attachments" is enabled, searches match text, code, and PDFs stored in Drive and automatically resolve them back to their parent conversation.
+- **Inline Attachments & Code Previews:** Uploaded code snippets, text files, and images are previewed directly in the prompt area.
+- **"Show Attachments" Toggle:** Easily collapse large code files (like project dumps or logs) into a compact badge to keep the conversation view clean.
+- **Model "Thoughts" Inspection:** Toggle chain-of-thought reasoning blocks on/off, rendered with high-contrast styling in both Light and Dark themes.
+- **Rate-Limited Background Sync:** Automatically keeps your local database in sync with Google Drive using request pacing, limited concurrency, and exponential backoff with jitter to stay well within Google API quotas.
+- **Hardened OAuth 2.0 (PKCE):** 
+  - Strictly requests `drive.readonly` scope.
+  - Implements RFC 7636 (PKCE with SHA-256) and validates CSRF `state` nonces against an ephemeral loopback callback server (`127.0.0.1`).
+  - Stores access and refresh tokens in your OS's native secure vault via [QtKeychain](https://github.com/frankosterfeld/qtkeychain) (**Windows Credential Manager**, **macOS Keychain**, or **Linux Secret Service / KWallet**).
+- **Optional Local LLM Backend:** Switch the toolbar from "Google AI Studio" to "Local Server" to chat with any OpenAI-compatible server (e.g., Ollama, LM Studio, llama.cpp server, or vLLM) running on `http://localhost:8000`.
+
+---
 
 ## Requirements
 
-- CMake 3.27+
-- A C++20 compiler (MSVC, Clang, or GCC)
-- Qt6 (Core, Gui, Widgets, Network, Sql) — 6.5 or newer recommended
-- Git (needed at configure time — QtKeychain is pulled automatically via `FetchContent`)
+- **CMake:** 3.27 or newer
+- **C++ Compiler:** C++20 compliant (MSVC 2022, GCC 11+, or Clang 13+)
+- **Qt6:** 6.5 or newer (Modules: `Core`, `Gui`, `Widgets`, `Network`, `Sql`)
+- **Git:** Required at CMake configure time to fetch `qtkeychain`
 
-On Linux, QtKeychain builds against the Secret Service API, so you'll also want `libsecret-1-dev` (Debian/Ubuntu) or `libsecret-devel` (Fedora) installed, plus a running keyring service (GNOME Keyring or KWallet — most desktop environments already have one).
+### Platform-Specific Packages
+- **Linux:** Requires Secret Service development libraries and a running keyring daemon:
+  - **Debian / Ubuntu:** `sudo apt install qt6-base-dev libsecret-1-dev`
+  - **Fedora:** `sudo dnf install qt6-qtbase-devel libsecret-devel`
+  - **Arch Linux:** `sudo pacman -S qt6-base libsecret`
+- **macOS:** Install Qt6 via Homebrew: `brew install qt`
+- **Windows:** Install Qt6 via the [Qt Online Installer](https://www.qt.io/download-qt-installer) (select the MSVC 2022 64-bit kit).
 
-## Building
+---
 
-The build is the same CMake flow on all three platforms:
+## Building from Source
+
+The build workflow is identical across all platforms:
 
 ```bash
-git clone <this-repo-url>
-cd GoogleAIViewer
-cmake -B build -S . -DCMAKE_PREFIX_PATH=/path/to/Qt/6.x.x/<kit>
+# 1. Clone the repository
+git clone https://github.com/your-username/Google-AI-Studio-Viewer.git
+cd Google-AI-Studio-Viewer
+
+# 2. Configure with CMake (specify your Qt6 directory if not in PATH)
+cmake -B build -S . -DCMAKE_BUILD_TYPE=Release
+
+# 3. Build the project
 cmake --build build --config Release
 ```
+Platform Configuration Notes
+macOS: Point CMake to Homebrew's Qt prefix:
+cmake -B build -S . -DCMAKE_PREFIX_PATH=$(brew --prefix qt)
+The build generates a self-contained .app bundle.
+Windows (Visual Studio / Qt Creator): Ensure you point CMAKE_PREFIX_PATH to your compiler kit, for example:
+cmake -B build -S . -DCMAKE_PREFIX_PATH=C:/Qt/6.7.0/msvc2022_64
 
-A few platform notes:
+Setting up Google API Access
+The application accesses your Google AI Studio conversations using a Google Drive OAuth "Desktop app" client that you create in your own Google Cloud Console. Setting this up takes about 3 minutes:
+Step 1: Create a Google Cloud Project & Enable Drive API
+Open the Google Cloud Console.
+In the top project dropdown, click New Project, name it AI Studio Viewer, and click Create.
+In the left navigation menu, go to APIs & Services → Library.
+Search for Google Drive API, select it, and click Enable.
+Step 2: Configure the OAuth Consent Screen
+(Google requires this before generating desktop credentials)
+In the left navigation menu, go to APIs & Services → OAuth consent screen.
+Select External as the User Type and click Create.
+Fill in the required basic information: 
+App name: Google AI Studio Viewer
+User support email: Select your email address.
+Developer contact email: Enter your email address.
+Click Save and Continue.
+Scopes: Click Add or Remove Scopes, check https://www.googleapis.com/auth/drive.readonly, click Update, and then Save and Continue.
+Test Users (Crucial Step): 
+Because your app is in "Testing" status, Google will reject sign-ins from any account not listed here with Error 403: access_denied.
+Click + Add Users, enter the Google email address you use for Google AI Studio, and click Save and Continue.
+Step 3: Create Desktop Client Credentials
+In the left navigation menu, go to APIs & Services → Credentials.
+Click + Create Credentials → OAuth client ID.
+In the Application type dropdown, choose Desktop app.
+Set the name to Google AI Studio Viewer Client and click Create.
+A dialog will appear displaying your Client ID and Client Secret.
+Step 4: First Sign-In
+Launch the application and click Sign In with Google.
+Paste the Client ID and Client Secret into the setup prompt. (The application saves these with owner-only read/write permissions to ~/Documents/AI/oauth_config.json so you only have to enter them once).
+A browser window will open displaying Google's authorization screen.
+Bypass the "Unverified App" Screen: Because you generated these credentials yourself in testing mode, Google will warn you that "Google hasn't verified this app". Click Advanced, then click Go to Google AI Studio Viewer (unsafe), and approve the read-only Drive permissions.
+The browser will redirect to a temporary loopback port (127.0.0.1) managed by the app, complete the PKCE handshake, and sign you in.
+The app will locate the "Google AI Studio" folder in your Drive, cache conversations into SQLite, and begin background synchronization.
 
-- **Linux**: install Qt6 via your distro's packages (`qt6-base-dev`, `qt6-tools-dev`, etc.) or the official Qt installer; `CMAKE_PREFIX_PATH` usually isn't needed if Qt6 is installed system-wide.
-- **macOS**: `brew install qt` works well; point `CMAKE_PREFIX_PATH` at the Homebrew Qt6 prefix (e.g. `$(brew --prefix qt)`). The app builds as a proper `.app` bundle.
-- **Windows**: install Qt6 via the [Qt online installer](https://www.qt.io/download-qt-installer) (pick the kit matching your compiler, e.g. MSVC 2022 64-bit) and point `CMAKE_PREFIX_PATH` at that kit's directory, e.g. `C:/Qt/6.7.0/msvc2019_64`.
+File & Data Storage Locations
+The application strictly separates configuration, database caching, and OS security credentials:
+Item
+Windows
+Linux
+macOS
+Client Secrets
+%USERPROFILE%\Documents\AI\oauth_config.json
+~/Documents/AI/oauth_config.json
+~/Documents/AI/oauth_config.json
+OAuth Tokens
+Windows Credential Manager
+Secret Service / KWallet
+macOS Keychain
+SQLite Cache
+%APPDATA%\GoogleAIViewer\viewer_cache.db
+~/.local/share/GoogleAIViewer/viewer_cache.db
+~/Library/Application Support/GoogleAIViewer/viewer_cache.db
+Application Log
+%APPDATA%\GoogleAIViewer\GoogleAIViewer.log
+~/.local/share/GoogleAIViewer/GoogleAIViewer.log
+~/Library/Application Support/GoogleAIViewer/GoogleAIViewer.log
 
-The first configure will take a little longer than usual since CMake fetches and builds QtKeychain from source.
 
-## Setting up Google API access
-
-The app talks to Google Drive using an OAuth "Desktop app" client that you create yourself:
-
-1. In the [Google Cloud Console](https://console.cloud.google.com/), create a project (or use an existing one) and enable the **Google Drive API**.
-2. Under **APIs & Services → Credentials**, create an **OAuth client ID** of type **Desktop app**.
-3. On first sign-in, the app will look for credentials at `Documents/AI/oauth_config.json`. If that file doesn't exist, it will prompt you for your Client ID and Client Secret directly and save them there for next time — so you don't need to hand-craft the file, just paste in the two values from the Cloud Console.
-4. Click **Sign In**. A browser window opens for the Google consent screen; the app spins up a temporary local server on `127.0.0.1` to catch the OAuth redirect (PKCE + state-checked, nothing is exposed externally).
-5. Once signed in, the app looks for a folder literally named **"Google AI Studio"** in your Drive — the same folder AI Studio creates when you save conversations there — lists what's in it, and starts syncing.
-
-Everything downloaded is cached locally in a SQLite database under your OS's app-data directory (e.g. `viewer_cache.db`), so re-opening the app doesn't require re-downloading everything, and search works even offline.
-
-## A note on how this was built
-
-This app was vibe coded — most of it came out of conversations with an AI coding assistant rather than being typed line-by-line. But "vibe coded" doesn't mean "one-shot and done." Getting from a working prototype to something that handles PKCE and CSRF state correctly, refreshes tokens mid-sync without losing your place, stores secrets in the right OS vault on three different platforms, and doesn't garble message ordering when timestamps collide — that took a genuinely long time, a lot of iteration, and a fair amount of manually tracing through edge cases the model got wrong the first (or third) time.
-
-Two frictions showed up repeatedly along the way, and honestly are part of why this project exists at all:
-
-- **Searching past conversations is a bit clumsy.** You remember roughly what you asked about — "the thing where the OAuth callback server wasn't shutting down" — but re-finding that exact exchange in a long history, across dozens of saved chats, is slower than it should be.
-- **Starting a new conversation often isn't a clean start.** Picking a fix back up in a fresh session usually takes several turns just re-explaining the file layout, prior decisions, and constraints before you can get back to the actual problem — context that a previous conversation already had, but that doesn't carry over.
-
-This app doesn't solve the second problem, but it's a small attempt at the first one.
-
-## Project structure
-
-```
+Project Architecture
 src/
-├── api/     # Drive/OAuth-adjacent networking, conversation sync, local SQLite cache
-├── app/     # Application bootstrap, logging, OAuth/token management
-├── models/  # Conversation/message/attachment data model + parsing
-└── ui/      # Main window and the three panes (conversation list, prompt list, response view)
-```
+├── api/
+│   ├── ConversationModel.cpp/h        # Turn pairing, chunk parser, stable sort
+│   ├── conversationsyncmanager.cpp/h  # Rate-limited background sync queue & backoff
+│   ├── CopilotApi.cpp/h               # Local OpenAI-compatible REST chat client
+│   ├── DriveApi.cpp/h                 # Google Drive API v3 requests & attachment fetcher
+│   └── LocalCache.cpp/h               # SQLite storage, text search, attachment lookups
+├── app/
+│   ├── Application.cpp/h              # QSettings and global app initialization
+│   ├── AuthManager.cpp/h              # OAuth 2.0 PKCE, loopback server, QtKeychain
+│   └── Logger.cpp/h                   # Thread-safe file and stderr logger
+├── models/
+│   ├── Conversation.cpp/h             # Conversation struct and prompt-response pairs
+│   ├── FileAttachment.cpp/h           # File attachment metadata
+│   └── Message.cpp/h                  # Flat message chunks and inline image extractor
+├── ui/
+│   ├── ConversationListPane.cpp/h     # Left sidebar conversation list and sorting
+│   ├── FilePreviewWidget.cpp/h        # Standalone attachment preview widget
+│   ├── ImageViewerDialog.cpp/h        # Modal zoomable image viewer
+│   ├── MainWindow.cpp/h               # Main window, toolbar, coordinator
+│   ├── PromptListPane.cpp/h           # Middle pane displaying prompt turns
+│   └── ResponsePane.cpp/h             # Right pane with markdown, attachments & thoughts
+└── main.cpp                           # Entry point and AppData logger setup
 
-## License
+A Note on How This Was Built
+This project was built iteratively using AI-assisted programming ("vibe coding"). But moving from a basic prototype to a robust production tool required solving real engineering hurdles along the way:
+Taming Google Drive API Quotas: Handling rate limits and 429 backoff gracefully during bulk downloads.
+Solving the "Unindexed File" Problem: Discovering that Google Drive does not index .prompt JSON files, which led to building a client-side SQLite search engine.
+De-scrambling Prompt Chunks: Replacing non-deterministic std::sort with std::stable_sort to maintain the chronological order of simultaneous thoughts and model text.
+Cross-Platform Credential Security: Moving away from plaintext configuration files to OS-level secure credential storage using QtKeychain across Windows, Linux, and macOS.
+Native OS Theming: Resolving subtle desktop bugs, like Windows 11 light-selection highlights clashing with default text palettes.
 
-TBD — add a license before making the repository public if you intend others to use or contribute to it.
+License
+MIT License. See LICENSE for details.
