@@ -23,6 +23,13 @@ public:
     void setSearchTerm(const QString &term);
     void clear();
 
+protected slots:
+    void onCustomContextMenuRequested(const QPoint &pos);
+
+private:
+    void copyAttachmentToClipboard(const QString &fileId, const QString &imageResourceName = QString());
+    bool isPosOverAttachment(const QPoint &pos, QString &outFileId, QString &outImageName) const;
+
 private:
     void render();
     void appendModelResponse(const QString &text, bool isThought, bool showThoughts);
@@ -44,4 +51,8 @@ private:
     // Cache downloaded attachments in memory (fileId -> {data, mimeType})
     QHash<QString, QPair<QByteArray, QString>> m_attachmentCache;
     QSet<QString> m_pendingDownloads;
+
+    // Character offsets of the Drive attachment block within m_browser's document
+    int m_attachmentStartPos = -1;
+    int m_attachmentEndPos = -1;
 };

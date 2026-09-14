@@ -17,7 +17,6 @@ bool ConversationModel::ingestConversation(const QString &fileId,
 {
     if (!isLikelyConversation(data))
     {
-        Logger::instance().warn("Ingest rejected non-conversation file (no runSettings): " + fileName);
         return false;
     }
 
@@ -149,7 +148,7 @@ void ConversationModel::buildPairs(Conversation &conv) const
             else
             {
                 // Item #5: Handle model message received before any user prompt without dropping data
-                Logger::instance().warn("buildPairs: Model response found before any user prompt: " + msg.text.left(60));
+                //Logger::instance().warn("buildPairs: Model response found before any user prompt: " + msg.text.left(60));
                 Conversation::PromptResponsePair pair;
                 pair.prompt.text = "[Initial Model Output]";
                 pair.prompt.role = "user";

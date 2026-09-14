@@ -1,387 +1,243 @@
-1. Item #3 & Item #5: ConversationModel (Stable Sort & Orphan Model Chunks)
-In src/api/ConversationModel.h
-Add the forward declaration for LocalCache and declare the new unified ingestConversation method (Item #7):
-#pragma once
 
-#include <QObject>
-#include <QList>
-#include <QJsonObject>
-#include <QDateTime>
-#include "models/Conversation.h"
+code
+Markdown
+### Task: Add "Copy Attachment" to Context Menu in `ResponsePane`
 
-class LocalCache;
+#### Objective
+In the `AI Response` pane (`ResponsePane`), when a user right-clicks on an attachment area (such as the attached file code/text box or an image), the context menu should display an action: **"Copy Attachment"**.
 
-class ConversationModel : public QObject
-{
-    Q_OBJECT
-public:
-    explicit ConversationModel(QObject *parent = nullptr);
+Clicking "Copy Attachment" should copy the full content of the attachment to the system clipboard:
+- If the attachment is **text or code** (e.g., `.txt`, `.cpp`, `.py`, `.json`, etc.), copy the complete raw text of the file (`QString::fromUtf8(data)`).
+- If the attachment is an **image** (or an inline image), copy the image to the clipboard as a `QPixmap` / `QImage`.
+- Normal text editing context menu actions ("Copy" for selected text, "Select All") must continue to work normally.
 
-    Conversation parseConversation(const QString &fileId, const QString &fileName,
-                                   const QJsonObject &root) const;
-    static bool isLikelyConversation(const QJsonObject &root);
+---
 
-    // Unified ingest pipeline: validate -> cache -> parse (Item #7)
-    bool ingestConversation(const QString &fileId,
-                            const QString &fileName,
-                            const QDateTime &modTime,
-                            const QJsonObject &data,
-                            LocalCache *cache,
-                            Conversation &outConv) const;
+### Files to Modify
+- `src/ui/ResponsePane.h`
+- `src/ui/ResponsePane.cpp`
+
+---
+
+### Step-by-Step Implementation Instructions
+
+#### 1. Track the Attachment Area Range in `ResponsePane.h`
+Add members to `ResponsePane` to track character offsets of the attachment within `m_browser`'s document, and declare the context menu handler:
+
+```cpp
+// In src/ui/ResponsePane.h
+
+protected slots:
+    void onCustomContextMenuRequested(const QPoint &pos);
 
 private:
-    void buildPairs(Conversation &conv) const;
-};
-In src/api/ConversationModel.cpp
-Change std::sort to std::stable_sort (Item #3) to preserve the original sequence of multi-part chunks sharing the same timestamp.
-Handle model chunks arriving without an active prompt turn instead of dropping them silently (Item #5).
-Implement ingestConversation (Item #7).
-#include "ConversationModel.h"
-#include "LocalCache.h"
-#include "app/Logger.h"
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <algorithm>
+    void copyAttachmentToClipboard(const QString &fileId, const QString &imageResourceName = QString());
+    bool isPosOverAttachment(const QPoint &pos, QString &outFileId, QString &outImageName) const;
 
-ConversationModel::ConversationModel(QObject *parent)
-    : QObject(parent) {}
-
-bool ConversationModel::ingestConversation(const QString &fileId,
-                                           const QString &fileName,
-                                           const QDateTime &modTime,
-                                           const QJsonObject &data,
-                                           LocalCache *cache,
-                                           Conversation &outConv) const
+    int m_attachmentStartPos = -1;
+    int m_attachmentEndPos = -1;
+2. Record the Attachment Position During render() in ResponsePane.cpp
+When render() generates the document, insert the attachment using a QTextCursor (or measure document character counts) so we know the exact character position bounds of the attachment block:
+code
+C++
+void ResponsePane::render()
 {
-    if (!isLikelyConversation(data))
+    m_browser->clear();
+    m_attachmentStartPos = -1;
+    m_attachmentEndPos = -1;
+
+    bool isDark = m_browser->palette().color(QPalette::Base).lightnessF() < 0.5;
+    QString hrColor = isDark ? "#444444" : "#cccccc";
+
+    QString promptHtml = applySearchHighlight(markdownToHtml(m_currentPair.prompt.text));
+    QString headerHtml = "<h3>Prompt</h3><div style='padding:8px; margin:4px 0;'>" + promptHtml + "</div>";
+    
+    QTextCursor cursor(m_browser->document());
+    cursor.movePosition(QTextCursor::End);
+    cursor.insertHtml(headerHtml);
+
+    // --- Attachment Insertion with Position Tracking ---
+    QString docId = m_currentPair.prompt.driveDocumentId;
+    if (!docId.isEmpty() && m_showAttachments)
     {
-        Logger::instance().warn("Ingest rejected non-conversation file (no runSettings): " + fileName);
-        return false;
-    }
+        m_attachmentStartPos = cursor.position();
 
-    if (cache)
-    {
-        cache->saveConversation(fileId, fileName, modTime, data);
-    }
-
-    outConv = parseConversation(fileId, fileName, data);
-    return true;
-}
-
-Conversation ConversationModel::parseConversation(const QString &fileId,
-                                                  const QString &fileName,
-                                                  const QJsonObject &root) const
-{
-    Conversation conv;
-    conv.fileId = fileId;
-    conv.fileName = fileName;
-
-    QJsonObject settings = root["runSettings"].toObject();
-    conv.model = settings["model"].toString();
-    conv.temperature = settings["temperature"].toDouble(1.0);
-    conv.topP = settings["topP"].toDouble(0.95);
-    conv.topK = settings["topK"].toInt(64);
-    conv.maxOutputTokens = settings["maxOutputTokens"].toInt(8192);
-    conv.systemInstruction = root["systemInstruction"].toObject();
-
-    QJsonArray chunks = root["chunkedPrompt"].toObject()["chunks"].toArray();
-    for (const auto &chunk : chunks)
-        conv.messages.append(Message::fromJson(chunk.toObject()));
-
-    // Item #3: Use std::stable_sort to preserve relative ordering for chunks with identical timestamps
-    std::stable_sort(conv.messages.begin(), conv.messages.end(),
-                     [](const Message &a, const Message &b)
-                     {
-                         qint64 ta = a.createTime.isValid() ? a.createTime.toMSecsSinceEpoch() : 0;
-                         qint64 tb = b.createTime.isValid() ? b.createTime.toMSecsSinceEpoch() : 0;
-                         if (ta != tb)
-                             return ta < tb;
-                         if (a.role != b.role)
-                             return a.role == "user";
-                         return false;
-                     });
-
-    buildPairs(conv);
-    return conv;
-}
-
-bool ConversationModel::isLikelyConversation(const QJsonObject &root)
-{
-    return root.contains("runSettings") && root["runSettings"].isObject();
-}
-
-void ConversationModel::buildPairs(Conversation &conv) const
-{
-    conv.pairs.clear();
-
-    Message currentPrompt;
-    bool promptActive = false;
-    bool modelResponded = false;
-
-    for (const auto &msg : conv.messages)
-    {
-        if (msg.role == "user")
+        if (m_attachmentCache.contains(docId))
         {
-            if (modelResponded)
-            {
-                currentPrompt = msg;
-                promptActive = true;
-                modelResponded = false;
-            }
-            else if (promptActive)
-            {
-                qint64 tCurrent = currentPrompt.createTime.isValid() ? currentPrompt.createTime.toMSecsSinceEpoch() : 0;
-                qint64 tMsg = msg.createTime.isValid() ? msg.createTime.toMSecsSinceEpoch() : 0;
+            auto att = m_attachmentCache[docId];
+            cursor.insertHtml(formatAttachmentHtml(att.first, att.second, docId));
+        }
+        else
+        {
+            QString boxBg = isDark ? "#2a2a2a" : "#f4f4f4";
+            QString boxColor = isDark ? "#888888" : "#666666";
+            cursor.insertHtml(QString("<div style='background:%1; color:%2; border-radius:4px; padding:8px; margin:6px 0; font-style:italic;'>"
+                                      "&#x2935; [Downloading attachment %3...]</div>")
+                                  .arg(boxBg, boxColor, docId.toHtmlEscaped()));
+        }
 
-                if (tMsg == tCurrent || msg.text.isEmpty() || currentPrompt.text.isEmpty())
-                {
-                    if (currentPrompt.text.isEmpty() && !msg.text.isEmpty())
-                        currentPrompt.text = msg.text;
-                    if (currentPrompt.driveDocumentId.isEmpty() && !msg.driveDocumentId.isEmpty())
-                        currentPrompt.driveDocumentId = msg.driveDocumentId;
-                    if (currentPrompt.inlineImageData.isEmpty() && !msg.inlineImageData.isEmpty())
-                    {
-                        currentPrompt.inlineImageData = msg.inlineImageData;
-                        currentPrompt.inlineImageMime = msg.inlineImageMime;
-                        currentPrompt.inlineImages = msg.inlineImages;
-                    }
-                }
-                else
-                {
-                    Conversation::PromptResponsePair pair;
-                    pair.prompt = currentPrompt;
-                    conv.pairs.append(pair);
+        m_attachmentEndPos = cursor.position();
+    }
+    else if (!docId.isEmpty() && !m_showAttachments)
+    {
+        // Collapsed badge
+        QString badgeBg = isDark ? "#2a2a2a" : "#f1f3f5";
+        QString badgeBorder = isDark ? "#3c3c3c" : "#d0d7de";
+        QString badgeColor = isDark ? "#888888" : "#666666";
+        cursor.insertHtml(QString("<div style='background:%1; color:%2; border:1px dashed %3; border-radius:4px; padding:6px 10px; margin:6px 0; font-size:11px;'>"
+                                  "&#x1F4CE; <i>[Attached file hidden — check 'Show Attachments' to view]</i></div>")
+                              .arg(badgeBg, badgeColor, badgeBorder));
+    }
 
-                    currentPrompt = msg;
-                }
-            }
-            else
+    // --- Inline Images ---
+    if (m_showAttachments)
+    {
+        if (!m_currentPair.prompt.inlineImages.isEmpty())
+        {
+            for (int i = 0; i < m_currentPair.prompt.inlineImages.size(); ++i)
             {
-                currentPrompt = msg;
-                promptActive = true;
-                modelResponded = false;
+                const auto &img = m_currentPair.prompt.inlineImages[i];
+                appendInlineImage(img.data, img.mimeType, i);
             }
         }
-        else if (msg.role == "model")
+        else if (!m_currentPair.prompt.inlineImageData.isEmpty())
         {
-            if (promptActive)
-            {
-                if (!modelResponded)
-                {
-                    Conversation::PromptResponsePair pair;
-                    pair.prompt = currentPrompt;
-                    pair.responses.append(msg);
-                    conv.pairs.append(pair);
-                    modelResponded = true;
-                }
-                else
-                {
-                    if (!conv.pairs.isEmpty())
-                        conv.pairs.last().responses.append(msg);
-                }
-            }
-            else
-            {
-                // Item #5: Handle model message received before any user prompt without dropping data
-                Logger::instance().warn("buildPairs: Model response found before any user prompt: " + msg.text.left(60));
-                Conversation::PromptResponsePair pair;
-                pair.prompt.text = "[Initial Model Output]";
-                pair.prompt.role = "user";
-                pair.prompt.createTime = msg.createTime;
-                pair.responses.append(msg);
-                conv.pairs.append(pair);
-            }
+            appendInlineImage(m_currentPair.prompt.inlineImageData, m_currentPair.prompt.inlineImageMime, 0);
         }
     }
 
-    if (promptActive && !modelResponded)
-    {
-        Conversation::PromptResponsePair pair;
-        pair.prompt = currentPrompt;
-        conv.pairs.append(pair);
-    }
-}
+    // Divider & Model Responses
+    cursor.movePosition(QTextCursor::End);
+    cursor.insertHtml("<hr style='border:none; border-top:1px solid " + hrColor + "; margin:12px 0;'>");
 
-2. Item #4: DriveApi State Reset (Prevent Deadlock)
-In src/api/DriveApi.h
-Add resetState() to public methods:
-public:
-    void resetState();
-In src/api/DriveApi.cpp
-Implement resetState() to clear pending requests and reset m_refreshInProgress:
-void DriveApi::resetState()
-{
-    m_refreshInProgress = false;
-    m_pendingRequests.clear();
-}
-
-3. Item #7: ConversationSyncManager (Use Ingest Pipeline)
-In src/api/conversationsyncmanager.h
-Add a signal so invalid files found during background sync are cleaned up from the UI:
-signals:
-    void conversationInvalid(const QString &fileId);
-In src/api/conversationsyncmanager.cpp
-Update handleReply to use m_model->ingestConversation:
-    auto doc = QJsonDocument::fromJson(reply->readAll());
-    QJsonObject data = doc.object();
-
-    Conversation conv;
-    if (m_model->ingestConversation(task.file.fileId, task.file.fileName, task.file.modifiedTime, data, m_cache, conv))
+    for (const auto &resp : m_currentPair.responses)
     {
-        emit conversationSynced(conv);
-    }
-    else
-    {
-        emit conversationInvalid(task.file.fileId);
+        appendModelResponse(resp.text, resp.isThought, m_showThoughts);
     }
 
-    m_completedTasks++;
-    emit syncProgress(m_completedTasks, m_totalTasks, task.file.fileName);
+    if (m_currentPair.responses.isEmpty())
+        m_browser->append("<p><i>No response yet.</i></p>");
 
-4. Item #10 & Item #3: ConversationListPane (Clean Up Validation & Stable Sort)
-In src/ui/ConversationListPane.cpp:
-Validate that conv.fileId is not empty in isValidConv.
-Use std::stable_sort in applySort().
-Remove the stray tool comment artifact.
-bool ConversationListPane::isValidConv(const Conversation &conv) const
-{
-    // Item #10: Real validation check preventing empty stubs from rendering
-    return !conv.fileId.trimmed().isEmpty();
+    m_browser->verticalScrollBar()->setValue(0);
 }
+3. Enable Custom Context Menu in ResponsePane Constructor
+In ResponsePane::ResponsePane(QWidget *parent):
+code
+C++
+m_browser->setContextMenuPolicy(Qt::CustomContextMenu);
+connect(m_browser, &QWidget::customContextMenuRequested, 
+        this, &ResponsePane::onCustomContextMenuRequested);
+4. Implement Hit-Testing & Context Menu Handler
+code
+C++
+#include <QClipboard>
+#include <QGuiApplication>
+#include <QMenu>
 
-void ConversationListPane::applySort()
+bool ResponsePane::isPosOverAttachment(const QPoint &pos, QString &outFileId, QString &outImageName) const
 {
-    auto sortTimeMs = [](const Conversation &c) -> qint64
-    {
-        QDateTime t = c.messages.isEmpty() ? c.lastModified : c.messages.last().createTime;
-        return t.isValid() ? t.toMSecsSinceEpoch() : 0;
-    };
+    outFileId.clear();
+    outImageName.clear();
 
-    // Item #3: Use stable_sort to maintain deterministic order on ties
-    switch (m_sortMode)
+    QTextCursor cursor = m_browser->cursorForPosition(pos);
+    int p = cursor.position();
+
+    // 1. Check if over Drive Document attachment (code/text/image)
+    if (m_attachmentStartPos != -1 && m_attachmentEndPos != -1)
     {
-    case NewestFirst:
-        std::stable_sort(m_conversations.begin(), m_conversations.end(),
-                         [sortTimeMs](const Conversation &a, const Conversation &b)
-                         {
-                             return sortTimeMs(a) > sortTimeMs(b);
-                         });
-        break;
-    case OldestFirst:
-        std::stable_sort(m_conversations.begin(), m_conversations.end(),
-                         [sortTimeMs](const Conversation &a, const Conversation &b)
-                         {
-                             return sortTimeMs(a) < sortTimeMs(b);
-                         });
-        break;
-    case AlphaAZ:
-        std::stable_sort(m_conversations.begin(), m_conversations.end(),
-                         [](const Conversation &a, const Conversation &b)
-                         { return a.fileName.toLower() < b.fileName.toLower(); });
-        break;
-    case AlphaZA:
-        std::stable_sort(m_conversations.begin(), m_conversations.end(),
-                         [](const Conversation &a, const Conversation &b)
-                         { return a.fileName.toLower() > b.fileName.toLower(); });
-        break;
+        if (p >= m_attachmentStartPos && p <= m_attachmentEndPos)
+        {
+            outFileId = m_currentPair.prompt.driveDocumentId;
+            return true;
+        }
     }
+
+    // 2. Check if hovering over an image format (attached image or inline image)
+    QTextCharFormat fmt = cursor.charFormat();
+    if (fmt.isImageFormat())
+    {
+        outImageName = fmt.toImageFormat().name();
+        return true;
+    }
+
+    return false;
 }
 
-5. Item #4 & Item #7: MainWindow (Reset on Failure & Unified Ingestion)
-In src/ui/MainWindow.cpp:
-Reset DriveApi on sign-out and auth failure (Item #4):
-    connect(m_auth, &AuthManager::authFailed, this, [this](const QString &err)
-            {
-                m_drive->resetState(); // Item #4: Unblock DriveApi queue
-                statusBar()->showMessage("Auth failed: " + err);
-                QMessageBox::warning(this, "Auth Error", err);
-            });
-And in onSignOut():
-void MainWindow::onSignOut()
+void ResponsePane::onCustomContextMenuRequested(const QPoint &pos)
 {
-    m_syncMgr->cancelSync();
-    m_drive->resetState(); // Item #4: Reset DriveApi state
-    m_auth->signOut();
-    m_signInAction->setVisible(true);
-    m_signOutAction->setVisible(false);
-    m_convPane->clear();
-    m_promptPane->clear();
-    m_responsePane->clear();
-    statusBar()->showMessage("Signed out.");
+    QMenu *menu = m_browser->createStandardContextMenu(pos);
+
+    QString fileId;
+    QString imageName;
+    if (isPosOverAttachment(pos, fileId, imageName))
+    {
+        QAction *copyAttAction = new QAction(QIcon::fromTheme("edit-copy"), tr("Copy Attachment"), menu);
+        connect(copyAttAction, &QAction::triggered, this, [this, fileId, imageName]() {
+            copyAttachmentToClipboard(fileId, imageName);
+        });
+
+        // Insert at the top of the menu before standard actions
+        if (!menu->actions().isEmpty())
+        {
+            menu->insertAction(menu->actions().first(), copyAttAction);
+            menu->insertSeparator(menu->actions().at(1));
+        }
+        else
+        {
+            menu->addAction(copyAttAction);
+        }
+    }
+
+    menu->exec(m_browser->mapToGlobal(pos));
+    delete menu;
 }
-Use unified ingestConversation for on-demand downloads (Item #7):
-    connect(m_drive, &DriveApi::conversationDownloaded, this,
-            [this](const QString &fileId, const QString &fileName, const QJsonObject &data)
-            {
-                QDateTime modTime;
-                for (const auto &f : m_conversationFiles)
-                {
-                    if (f.fileId == fileId)
-                    {
-                        modTime = f.modifiedTime;
-                        break;
-                    }
-                }
-
-                Conversation conv;
-                if (m_convModel->ingestConversation(fileId, fileName, modTime, data, &m_cache, conv))
-                {
-                    m_convPane->addConversation(conv);
-
-                    if (m_selectedFileId == fileId)
-                    {
-                        int idx = indexForFileId();
-                        if (idx >= 0)
-                            onConversationSelected(idx);
-                    }
-                }
-                else
-                {
-                    m_convPane->removeConversation(fileId);
-                    if (m_matchingFileIds.contains(fileId))
-                    {
-                        m_matchingFileIds.remove(fileId);
-                        m_convPane->setFilterFileIds(m_matchingFileIds);
-                    }
-                }
-            });
-Handle invalid background-synced conversations (Item #7):
-    connect(m_syncMgr, &ConversationSyncManager::conversationInvalid, this,
-            [this](const QString &fileId)
-            {
-                m_convPane->removeConversation(fileId);
-                if (m_matchingFileIds.contains(fileId))
-                {
-                    m_matchingFileIds.remove(fileId);
-                    m_convPane->setFilterFileIds(m_matchingFileIds);
-                }
-            });
-
-6. Item #8: ResponsePane (Magic String Sniffing)
-In src/ui/ResponsePane.cpp, broaden the error prefix check so it is case-insensitive and supports error patterns:
-void ResponsePane::appendModelResponse(const QString &text, bool isThought, bool showThoughts)
+5. Implement copyAttachmentToClipboard()
+code
+C++
+void ResponsePane::copyAttachmentToClipboard(const QString &fileId, const QString &imageResourceName)
 {
-    if (isThought && !showThoughts)
+    QClipboard *clipboard = QGuiApplication::clipboard();
+    if (!clipboard) return;
+
+    // Case 1: Drive attachment loaded in memory cache
+    if (!fileId.isEmpty() && m_attachmentCache.contains(fileId))
+    {
+        const auto &att = m_attachmentCache[fileId];
+        const QByteArray &data = att.first;
+        const QString &mime = att.second;
+
+        if (mime.startsWith("image/"))
+        {
+            QPixmap pix;
+            if (pix.loadFromData(data))
+                clipboard->setPixmap(pix);
+        }
+        else
+        {
+            // Text/code file (e.g. codetree.txt, README.md, source code)
+            clipboard->setText(QString::fromUtf8(data));
+        }
         return;
-
-    QString html;
-    QString processedText = applySearchHighlight(markdownToHtml(text));
-
-    // Item #8: Case-insensitive check for error messages
-    if (text.startsWith("ERROR:", Qt::CaseInsensitive) || text.startsWith("Error:", Qt::CaseInsensitive))
-    {
-        html = "<div style='background:#fff3cd; border:1px solid #ffc107; border-radius:4px; padding:8px; margin:4px 0;'>"
-               "<b>&#x26A0; Error / Unsupported Content:</b><br>" + processedText + "</div>";
-    }
-    else if (isThought)
-    {
-        html = "<div style='background:#f0f0f0; border-left:3px solid #888; padding:8px; margin:4px 0;'>"
-               "<i>Thought:</i><br>" + processedText + "</div>";
-    }
-    else
-    {
-        html = "<div style='padding:8px; margin:4px 0;'>" + processedText + "</div>";
     }
 
-    m_browser->append(html);
+    // Case 2: Image resource embedded in document (inline image)
+    if (!imageResourceName.isEmpty())
+    {
+        QVariant res = m_browser->document()->resource(QTextDocument::ImageResource, QUrl(imageResourceName));
+        if (res.isValid())
+        {
+            QImage img = res.value<QImage>();
+            if (!img.isNull())
+            {
+                clipboard->setImage(img);
+                return;
+            }
+            QPixmap pix = res.value<QPixmap>();
+            if (!pix.isNull())
+            {
+                clipboard->setPixmap(pix);
+                return;
+            }
+        }
+    }
 }

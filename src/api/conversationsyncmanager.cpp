@@ -70,7 +70,7 @@ void ConversationSyncManager::startSync(const QList<DriveFile> &driveFiles)
     {
         if (!remoteFileIds.contains(cachedId))
         {
-            Logger::instance().info("Pruning deleted conversation from cache: " + cachedId);
+            //Logger::instance().info("Pruning deleted conversation from cache: " + cachedId);
             m_cache->deleteConversation(cachedId);
         }
     }
@@ -156,8 +156,8 @@ void ConversationSyncManager::handleReply(QNetworkReply *reply, DownloadTask tas
         {
             // Exponential Backoff with Jitter: (2^retry * 1000ms) + random(100..500ms)
             int backoffMs = (1 << task.retryCount) * 1000 + QRandomGenerator::global()->bounded(100, 500);
-            Logger::instance().warn(QString("Drive API rate-limited (HTTP %1). Backing off for %2 ms...")
-                                        .arg(statusCode).arg(backoffMs));
+            //Logger::instance().warn(QString("Drive API rate-limited (HTTP %1). Backing off for %2 ms...")
+                                        //.arg(statusCode).arg(backoffMs));
 
             m_pacingTimer->stop();
             QTimer::singleShot(backoffMs, this, [this, task]()
@@ -172,8 +172,8 @@ void ConversationSyncManager::handleReply(QNetworkReply *reply, DownloadTask tas
 
     if (reply->error() != QNetworkReply::NoError)
     {
-        Logger::instance().error(QString("Failed to sync file '%1': %2")
-                                     .arg(task.file.fileName, reply->errorString()));
+        //Logger::instance().error(QString("Failed to sync file '%1': %2")
+                                     //.arg(task.file.fileName, reply->errorString()));
         m_completedTasks++;
         emit syncProgress(m_completedTasks, m_totalTasks, task.file.fileName);
         return;

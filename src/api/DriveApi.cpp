@@ -306,7 +306,7 @@ void DriveApi::searchConversations(const QString &query, bool includeAttachments
 
     QUrl url("https://www.googleapis.com/drive/v3/files");
     url.setQuery(q);
-    Logger::instance().info("DriveApi::searchConversations url" +  url.toString());
+    //Logger::instance().info("DriveApi::searchConversations url" +  url.toString());
 
 
     sendGet(url.toString(), [this, includeAttachments](const QJsonObject &response)

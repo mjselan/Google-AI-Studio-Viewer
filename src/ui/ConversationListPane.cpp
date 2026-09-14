@@ -75,7 +75,7 @@ void ConversationListPane::setFileList(const QList<DriveFile> &files)
 
 void ConversationListPane::addConversation(const Conversation &conv)
 {
-    Logger::instance().debug("Pane: addConversation called for: " + conv.fileName);
+    //Logger::instance().debug("Pane: addConversation called for: " + conv.fileName);
     bool found = false;
     for (int i = 0; i < m_conversations.size(); ++i)
     {
@@ -256,7 +256,7 @@ void ConversationListPane::selectByFileId(const QString &fileId)
 
 void ConversationListPane::removeConversation(const QString &fileId)
 {
-    Logger::instance().info("Pane: removeConversation called for ID: " + fileId);
+    //Logger::instance().info("Pane: removeConversation called for ID: " + fileId);
     for (int i = 0; i < m_conversations.size(); ++i) {
         if (m_conversations[i].fileId == fileId) {
             m_conversations.removeAt(i);

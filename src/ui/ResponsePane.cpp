@@ -7,9 +7,14 @@
 #include <QJsonArray>
 #include <QJsonObject>
 #include <QTextDocument>
+#include <QTextCursor>
 #include <QScrollBar>
 #include <QRegularExpression>
 #include <QUrl>
+#include <QMenu>
+#include <QAction>
+#include <QClipboard>
+#include <QGuiApplication>
 
 static QString markdownToHtml(const QString &markdown)
 {
@@ -56,6 +61,12 @@ ResponsePane::ResponsePane(QWidget *parent)
     header->setStyleSheet("font-weight: bold; padding: 4px;");
     m_layout->addWidget(header);
     m_layout->addWidget(m_browser);
+    m_browser->setContextMenuPolicy(Qt::CustomContextMenu);
+    m_browser->viewport()->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_browser, &QWidget::customContextMenuRequested,
+            this, &ResponsePane::onCustomContextMenuRequested);
+    connect(m_browser->viewport(), &QWidget::customContextMenuRequested,
+            this, &ResponsePane::onCustomContextMenuRequested);
 }
 
 void ResponsePane::setSearchTerm(const QString &term)
@@ -114,41 +125,53 @@ void ResponsePane::showResponse(const Conversation::PromptResponsePair &pair,
 void ResponsePane::render()
 {
     m_browser->clear();
+    m_attachmentStartPos = -1;
+    m_attachmentEndPos = -1;
 
     bool isDark = m_browser->palette().color(QPalette::Base).lightnessF() < 0.5;
     QString hrColor = isDark ? "#444444" : "#cccccc";
 
     QString promptHtml = applySearchHighlight(markdownToHtml(m_currentPair.prompt.text));
-    QString html = "<h3>Prompt</h3><div style='padding:8px; margin:4px 0;'>" + promptHtml + "</div>";
+    QString headerHtml = "<h3>Prompt</h3><div style='padding:8px; margin:4px 0;'>" + promptHtml + "</div>";
 
-    // --- Attachment Handling ---
+    QTextCursor cursor(m_browser->document());
+    cursor.movePosition(QTextCursor::End);
+    cursor.insertHtml(headerHtml);
+
+    // --- Attachment Insertion with Position Tracking ---
     QString docId = m_currentPair.prompt.driveDocumentId;
-    if (!docId.isEmpty())
+    if (!docId.isEmpty() && m_showAttachments)
     {
-        if (!m_showAttachments)
-        {
-            // Compact pill badge when unchecked
-            QString badgeBg = isDark ? "#2a2a2a" : "#f1f3f5";
-            QString badgeBorder = isDark ? "#3c3c3c" : "#d0d7de";
-            QString badgeColor = isDark ? "#888888" : "#666666";
+        // 1. Record exact start position in document
+        cursor.movePosition(QTextCursor::End);
+        m_attachmentStartPos = m_browser->document()->characterCount() - 1;
 
-            html += QString("<div style='background:%1; color:%2; border:1px dashed %3; border-radius:4px; padding:6px 10px; margin:6px 0; font-size:11px;'>"
-                            "&#x1F4CE; <i>[Attached file hidden — check 'Show Attachments' to view]</i></div>")
-                        .arg(badgeBg, badgeColor, badgeBorder);
-        }
-        else if (m_attachmentCache.contains(docId))
+        if (m_attachmentCache.contains(docId))
         {
             auto att = m_attachmentCache[docId];
-            html += formatAttachmentHtml(att.first, att.second, docId);
+            cursor.insertHtml(formatAttachmentHtml(att.first, att.second, docId));
         }
         else
         {
             QString boxBg = isDark ? "#2a2a2a" : "#f4f4f4";
             QString boxColor = isDark ? "#888888" : "#666666";
-            html += QString("<div style='background:%1; color:%2; border-radius:4px; padding:8px; margin:6px 0; font-style:italic;'>"
-                            "&#x2935; [Downloading attachment %3...]</div>")
-                        .arg(boxBg, boxColor, docId.toHtmlEscaped());
+            cursor.insertHtml(QString("<div style='background:%1; color:%2; border-radius:4px; padding:8px; margin:6px 0; font-style:italic;'>"
+                                      "&#x2935; [Downloading attachment %3...]</div>")
+                                  .arg(boxBg, boxColor, docId.toHtmlEscaped()));
         }
+
+        // 2. Move cursor to true end of document and record end position
+        cursor.movePosition(QTextCursor::End);
+        m_attachmentEndPos = m_browser->document()->characterCount() - 1;
+    }
+    else if (!docId.isEmpty() && !m_showAttachments)
+    {
+        QString badgeBg = isDark ? "#2a2a2a" : "#f1f3f5";
+        QString badgeBorder = isDark ? "#3c3c3c" : "#d0d7de";
+        QString badgeColor = isDark ? "#888888" : "#666666";
+        cursor.insertHtml(QString("<div style='background:%1; color:%2; border:1px dashed %3; border-radius:4px; padding:6px 10px; margin:6px 0; font-size:11px;'>"
+                                  "&#x1F4CE; <i>[Attached file hidden — check 'Show Attachments' to view]</i></div>")
+                              .arg(badgeBg, badgeColor, badgeBorder));
     }
 
     // --- Inline Images ---
@@ -168,10 +191,10 @@ void ResponsePane::render()
         }
     }
 
-    html += "<hr style='border:none; border-top:1px solid " + hrColor + "; margin:12px 0;'>";
-    m_browser->setHtml(html);
+    // Divider & Model Responses
+    cursor.movePosition(QTextCursor::End);
+    cursor.insertHtml("<hr style='border:none; border-top:1px solid " + hrColor + "; margin:12px 0;'>");
 
-    // Render Model Responses below the prompt
     for (const auto &resp : m_currentPair.responses)
     {
         appendModelResponse(resp.text, resp.isThought, m_showThoughts);
@@ -221,7 +244,7 @@ QString ResponsePane::formatAttachmentHtml(const QByteArray &data, const QString
         {
             QString url = QString("attachment://%1").arg(fileId);
             m_browser->document()->addResource(QTextDocument::ImageResource, QUrl(url), fitImageWidth(pix));
-            return QString("<div style='text-align:center; margin:8px 0;'><img src='%1'/></div>").arg(url);
+            return QString("<div style='text-align:center; margin:8px 0;'><a href='%1'><img src='%1'/></a></div>").arg(url);
         }
         else
         {
@@ -229,8 +252,7 @@ QString ResponsePane::formatAttachmentHtml(const QByteArray &data, const QString
         }
     }
 
-    // 2. Text / Code preview (like codetree.txt)
-    // Check if it's text either by mime or if it contains zero null bytes
+    // 2. Text / Code preview (like codetree.txt, README.md)
     bool isText = mimeType.startsWith("text/") ||
                   mimeType.contains("json") ||
                   mimeType.contains("javascript") ||
@@ -248,18 +270,20 @@ QString ResponsePane::formatAttachmentHtml(const QByteArray &data, const QString
         QString highlighted = applySearchHighlight(textContent.toHtmlEscaped());
 
         return QString("<div style='margin:8px 0;'>"
-                       "<div style='font-size:11px; font-weight:bold; color:%1; margin-bottom:4px;'>&#x1F4CE; Attached File:</div>"
-                       "<pre style='background:%2; color:%3; border:1px solid %4; border-radius:4px; padding:10px; font-family:Consolas, Monaco, monospace; font-size:12px; white-space:pre-wrap;'>%5</pre>"
+                       "<div style='font-size:11px; font-weight:bold; margin-bottom:4px;'>"
+                       "<a href='attachment://%1' style='text-decoration:none; color:%2;'>&#x1F4CE; Attached File (click or right-click to copy):</a>"
+                       "</div>"
+                       "<pre style='background:%3; color:%4; border:1px solid %5; border-radius:4px; padding:10px; font-family:Consolas, Monaco, monospace; font-size:12px; white-space:pre-wrap;'>%6</pre>"
                        "</div>")
-            .arg(headerColor, codeBg, codeColor, codeBorder, highlighted);
+            .arg(fileId, headerColor, codeBg, codeColor, codeBorder, highlighted);
     }
 
     // 3. Binary file fallback
     QString binBg = isDark ? "#252526" : "#f0f0f0";
     QString binColor = isDark ? "#aaaaaa" : "#555555";
     return QString("<div style='background:%1; color:%2; border-radius:4px; padding:8px; margin:6px 0;'>"
-                   "&#x1F4CE; <i>Attachment downloaded (%3, %4 bytes) - binary format cannot be previewed inline.</i></div>")
-        .arg(binBg, binColor, mimeType.toHtmlEscaped()).arg(data.size());
+                   "&#x1F4CE; <a href='attachment://%3' style='text-decoration:none; color:%2;'><i>Attachment downloaded (%4, %5 bytes) - binary format.</i></a></div>")
+        .arg(binBg, binColor, fileId, mimeType.toHtmlEscaped()).arg(data.size());
 }
 
 void ResponsePane::appendModelResponse(const QString &text, bool isThought, bool showThoughts)
@@ -323,6 +347,58 @@ void ResponsePane::appendInlineImage(const QString &base64data, const QString &m
     }
 }
 
+bool ResponsePane::isPosOverAttachment(const QPoint &pos, QString &outFileId, QString &outImageName) const
+{
+    outFileId.clear();
+    outImageName.clear();
+
+    QString anchor = m_browser->anchorAt(pos);
+    QTextCursor cursor = m_browser->cursorForPosition(pos);
+    int p = cursor.position();
+
+    qDebug() << "[HitTest] anchorAt:" << anchor
+             << "| cursor.position:" << p
+             << "| attachmentRange:[" << m_attachmentStartPos << "," << m_attachmentEndPos << "]"
+             << "| current driveDocId:" << m_currentPair.prompt.driveDocumentId;
+
+    // Strategy 1: Check anchor
+    if (anchor.startsWith("attachment://"))
+    {
+        outFileId = anchor.mid(13);
+        qDebug() << "[HitTest] Matched via anchor:" << outFileId;
+        return true;
+    }
+
+    // Strategy 2: Check character range
+    if (m_attachmentStartPos != -1 && m_attachmentEndPos != -1)
+    {
+        if (p >= m_attachmentStartPos && p <= m_attachmentEndPos)
+        {
+            outFileId = m_currentPair.prompt.driveDocumentId;
+            qDebug() << "[HitTest] Matched via character range:" << outFileId;
+            return true;
+        }
+    }
+
+    // Strategy 3: Check image format
+    QTextCharFormat fmt = cursor.charFormat();
+    if (!fmt.isImageFormat())
+    {
+        QTextCursor prevCursor = cursor;
+        if (prevCursor.movePosition(QTextCursor::PreviousCharacter))
+            fmt = prevCursor.charFormat();
+    }
+    if (fmt.isImageFormat())
+    {
+        outImageName = fmt.toImageFormat().name();
+        qDebug() << "[HitTest] Matched via image format:" << outImageName;
+        return true;
+    }
+
+    qDebug() << "[HitTest] No match found.";
+    return false;
+}
+
 void ResponsePane::clear()
 {
     if (m_attachmentConn)
@@ -332,4 +408,95 @@ void ResponsePane::clear()
     m_searchTerm.clear();
     m_currentPair = Conversation::PromptResponsePair();
     m_pendingDownloads.clear();
+    m_attachmentStartPos = -1;
+    m_attachmentEndPos = -1;
+}
+
+
+void ResponsePane::onCustomContextMenuRequested(const QPoint &pos)
+{
+    qDebug() << "[ContextMenu] === Right-click detected at viewport pos:" << pos;
+
+    QMenu *menu = m_browser->createStandardContextMenu(pos);
+    if (!menu)
+        menu = new QMenu(m_browser);
+
+    QString fileId;
+    QString imageName;
+    bool isOver = isPosOverAttachment(pos, fileId, imageName);
+
+    qDebug() << "[ContextMenu] isPosOverAttachment returned:" << isOver
+             << "fileId:" << fileId << "imageName:" << imageName;
+
+    if (isOver)
+    {
+        QAction *copyAttAction = new QAction(tr("Copy Attachment"), menu);
+        connect(copyAttAction, &QAction::triggered, this, [this, fileId, imageName]() {
+            qDebug() << "[ContextMenu] 'Copy Attachment' clicked for:" << fileId << imageName;
+            copyAttachmentToClipboard(fileId, imageName);
+        });
+
+        if (!menu->actions().isEmpty())
+        {
+            menu->insertAction(menu->actions().first(), copyAttAction);
+            menu->insertSeparator(menu->actions().at(1));
+        }
+        else
+        {
+            menu->addAction(copyAttAction);
+        }
+        qDebug() << "[ContextMenu] Successfully inserted 'Copy Attachment' into menu!";
+    }
+
+    menu->exec(m_browser->viewport()->mapToGlobal(pos));
+    delete menu;
+}
+
+void ResponsePane::copyAttachmentToClipboard(const QString &fileId, const QString &imageResourceName)
+{
+    QClipboard *clipboard = QGuiApplication::clipboard();
+    if (!clipboard)
+        return;
+
+    // Case 1: Drive attachment loaded in memory cache
+    if (!fileId.isEmpty() && m_attachmentCache.contains(fileId))
+    {
+        const auto &att = m_attachmentCache[fileId];
+        const QByteArray &data = att.first;
+        const QString &mime = att.second;
+
+        if (mime.startsWith("image/"))
+        {
+            QPixmap pix;
+            if (pix.loadFromData(data))
+                clipboard->setPixmap(pix);
+        }
+        else
+        {
+            // Text/code file (e.g. codetree.txt, README.md, source code)
+            clipboard->setText(QString::fromUtf8(data));
+        }
+        return;
+    }
+
+    // Case 2: Image resource embedded in document (inline image)
+    if (!imageResourceName.isEmpty())
+    {
+        QVariant res = m_browser->document()->resource(QTextDocument::ImageResource, QUrl(imageResourceName));
+        if (res.isValid())
+        {
+            QImage img = res.value<QImage>();
+            if (!img.isNull())
+            {
+                clipboard->setImage(img);
+                return;
+            }
+            QPixmap pix = res.value<QPixmap>();
+            if (!pix.isNull())
+            {
+                clipboard->setPixmap(pix);
+                return;
+            }
+        }
+    }
 }
