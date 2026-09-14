@@ -68,11 +68,18 @@ qt_add_executable(${PROJECT_NAME}
     ${HEADERS}
 )
 
+qt_add_resources(${PROJECT_NAME} "app_icons"
+    PREFIX "/"
+    FILES icon_512.png
+)
+
 if(WIN32)
+    target_sources(${PROJECT_NAME} PRIVATE app.rc)
     set_target_properties(${PROJECT_NAME} PROPERTIES WIN32_EXECUTABLE TRUE)
 elseif(APPLE)
     set_target_properties(${PROJECT_NAME} PROPERTIES
         MACOSX_BUNDLE TRUE
+        MACOSX_BUNDLE_ICON_FILE "icon_512.png"
         MACOSX_BUNDLE_BUNDLE_NAME "GoogleAIViewer"
         MACOSX_BUNDLE_BUNDLE_VERSION "1.0.0"
         MACOSX_BUNDLE_SHORT_VERSION_STRING "1.0.0"
