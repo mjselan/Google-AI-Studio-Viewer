@@ -6,8 +6,8 @@ set BUILD_DIR=%~dp0build
 set WINDEPLOYQT=%QT_DIR%\bin\windeployqt6.exe
 
 rem Optional first argument: full path to the exe, a folder containing it, or Release / Debug
-set "EXE_ARG=%~1"
-
+rem set "EXE_ARG=%~1"
+set "EXE_ARG=C:\Github\Google-AI-Studio-Viewer\out\build\release\GoogleAIViewer.exe
 if not exist "%BUILD_DIR%" (
     echo Build directory not found: %BUILD_DIR%
     echo Run build first.
