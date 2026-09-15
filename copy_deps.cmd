@@ -1,16 +1,12 @@
 @echo off
 setlocal
-
+set "EXE_ARG=C:\Github\Google-AI-Studio-Viewer\out\build\release\GoogleAIViewer.exe"
 set QT_DIR=C:\Qt\6.11.1\msvc2022_64
-set BUILD_DIR=%~dp0build
+set BUILD_DIR=%~dp0out\build
 set WINDEPLOYQT=%QT_DIR%\bin\windeployqt6.exe
 
-rem Optional first argument: full path to the exe, a folder containing it, or Release / Debug
-rem set "EXE_ARG=%~1"
-set "EXE_ARG=C:\Github\Google-AI-Studio-Viewer\out\build\release\GoogleAIViewer.exe
 if not exist "%BUILD_DIR%" (
     echo Build directory not found: %BUILD_DIR%
-    echo Run build first.
     exit /b 1
 )
 
@@ -20,36 +16,12 @@ if not exist "%WINDEPLOYQT%" (
 )
 
 set "TARGET_EXE="
-
 if defined EXE_ARG (
     if exist "%EXE_ARG%\GoogleAIViewer.exe" (
         set "TARGET_EXE=%EXE_ARG%\GoogleAIViewer.exe"
     ) else if exist "%EXE_ARG%" (
         set "TARGET_EXE=%EXE_ARG%"
-    ) else if /i "%EXE_ARG%"=="Release" (
-        set "TARGET_EXE=%BUILD_DIR%\Desktop_Qt_6_11_1_MSVC2022_64bit_Release\GoogleAIViewer.exe"
-    ) else if /i "%EXE_ARG%"=="Debug" (
-        set "TARGET_EXE=%BUILD_DIR%\Desktop_Qt_6_11_1_MSVC2022_64bit_Debug\GoogleAIViewer.exe"
-    ) else (
-        echo Unknown argument or path not found: %EXE_ARG%
-        echo Usage: %~nx0 [path-to-exe ^| Release ^| Debug]
-        exit /b 1
     )
-) else (
-    rem Auto-detect: plain build dir first, then Qt Creator config dirs
-    if exist "%BUILD_DIR%\GoogleAIViewer.exe" (
-        set "TARGET_EXE=%BUILD_DIR%\GoogleAIViewer.exe"
-    ) else if exist "%BUILD_DIR%\Desktop_Qt_6_11_1_MSVC2022_64bit_Release\GoogleAIViewer.exe" (
-        set "TARGET_EXE=%BUILD_DIR%\Desktop_Qt_6_11_1_MSVC2022_64bit_Release\GoogleAIViewer.exe"
-    ) else if exist "%BUILD_DIR%\Desktop_Qt_6_11_1_MSVC2022_64bit_Debug\GoogleAIViewer.exe" (
-        set "TARGET_EXE=%BUILD_DIR%\Desktop_Qt_6_11_1_MSVC2022_64bit_Debug\GoogleAIViewer.exe"
-    )
-)
-
-if not defined TARGET_EXE (
-    echo GoogleAIViewer.exe not found under %BUILD_DIR%
-    echo Build the project first, or pass the exe path: %~nx0 path\to\GoogleAIViewer.exe
-    exit /b 1
 )
 
 if not exist "%TARGET_EXE%" (
@@ -57,11 +29,33 @@ if not exist "%TARGET_EXE%" (
     exit /b 1
 )
 
+for %%I in ("%TARGET_EXE%") do set "TARGET_DIR=%%~dpI"
+
+:: 1. Copy qt6keychain.dll into the release directory
+if not exist "%TARGET_DIR%qt6keychain.dll" (
+    echo Locating qt6keychain.dll in build dependencies...
+    for /r "%BUILD_DIR%" %%f in (qt6keychain.dll) do (
+        if exist "%%f" (
+            echo Copying %%f to %TARGET_DIR%
+            copy /y "%%f" "%TARGET_DIR%" >nul
+        )
+    )
+)
+
+:: 2. Trick windeployqt by temporarily satisfying its lookup in %QT_DIR%\bin
+copy /y "%TARGET_DIR%qt6keychain.dll" "%QT_DIR%\bin\qt6keychain.dll" >nul
+
+:: 3. Run windeployqt
 echo Running windeployqt6 on %TARGET_EXE% ...
 "%WINDEPLOYQT%" --no-translations "%TARGET_EXE%"
-if errorlevel 1 (
-    echo windeployqt6 failed with error %errorlevel%.
+set DEPLOY_RESULT=%errorlevel%
+
+:: 4. Remove the temporary copy from the Qt SDK folder
+del "%QT_DIR%\bin\qt6keychain.dll" >nul 2>&1
+
+if %DEPLOY_RESULT% neq 0 (
+    echo windeployqt6 failed with error %DEPLOY_RESULT%.
     exit /b 1
 )
 
-echo Done.
+echo Done. All dependencies deployed successfully!
