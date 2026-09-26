@@ -123,6 +123,7 @@ jobs:
           host: windows
           target: desktop
           arch: win64_msvc2022_64
+          outputdir: C:\Qt
           cache: true
 
       - name: Cache IFW
