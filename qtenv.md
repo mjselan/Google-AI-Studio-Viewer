@@ -2,17 +2,17 @@
 
 ## Environment Variables
 ```
-QT_DIR=C:\Qt\6.9.3\msvc2022_64
+QT_DIR=C:\Qt\6.11.1\msvc2022_64
 PATH=%QT_DIR%\bin;%PATH%
 ```
 
 ## Compiler
-Visual Studio 2022 — MSVC
-Installed at: `C:\Program Files\Microsoft Visual Studio\2022\Community`
+Visual Studio 2026 — MSVC
+Installed at: `C:\Program Files\Microsoft Visual Studio\18\Community`
 
 Initialize x64 environment:
 ```
-call "C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvarsall.bat" x64
+call "C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvarsall.bat" x64
 ```
 
 ## CMake
