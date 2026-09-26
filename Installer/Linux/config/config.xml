@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Installer>
+    <Name>Google AI Studio Viewer</Name>
+    <Version>1.0.0</Version>
+    <Title>Google AI Studio Viewer Setup</Title>
+    <Publisher>GoogleAIViewer</Publisher>
+    <ProductUrl>https://github.com/mjselan/Google-AI-Studio-Viewer</ProductUrl>
+    <TargetDir>@HomeDir@/GoogleAIViewer</TargetDir>
+    <AdminTargetDir>/opt/GoogleAIViewer</AdminTargetDir>
+    <MaintenanceToolName>GoogleAIViewerMaintenance</MaintenanceToolName>
+    <MaintenanceToolIniFile>GoogleAIViewerMaintenance.ini</MaintenanceToolIniFile>
+    <AllowNonAsciiCharacters>true</AllowNonAsciiCharacters>
+    <AllowSpaceInPath>true</AllowSpaceInPath>
+    <WizardStyle>Aero</WizardStyle>
+    <StyleSheet></StyleSheet>
+</Installer>

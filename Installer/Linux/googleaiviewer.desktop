@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Google AI Studio Viewer
+Comment=Browse and search Google AI Studio conversation history
+Exec=googleaiviewer.sh %F
+Icon=googleaiviewer.png
+Terminal=false
+Categories=Utility;Office;
+StartupWMClass=GoogleAIViewer

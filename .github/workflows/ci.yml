@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-linux:
+    name: Build + installer (Ubuntu 24.04)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system deps
+        run: >
+          sudo apt-get update &&
+          sudo apt-get install -y ninja-build patchelf libsecret-1-dev
+          libgl1 libfontconfig1 libxcb-cursor0
+
+      - name: Install Qt 6.11
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.11.1
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          cache: true
+
+      - name: Export QT_DIR
+        run: echo "QT_DIR=$(qmake -query QT_INSTALL_PREFIX)" >> "$GITHUB_ENV"
+
+      - name: Configure (Debug)
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_PREFIX_PATH="$QT_DIR"
+          -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        run: cmake --build build --config Debug
+
+      - name: Test (headless)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          if ctest --test-dir build -N 2>/dev/null | grep -qE "Test +#[0-9]+"; then
+            ctest --test-dir build --output-on-failure
+          else
+            echo "No tests configured; skipping."
+          fi
+
+      - name: Cache IFW
+        uses: actions/cache@v4
+        with:
+          path: ~/Qt/Tools/QtInstallerFramework
+          key: ifw-linux-4.11
+
+      - name: Install Qt Installer Framework
+        run: |
+          if [ ! -x "$HOME/Qt/Tools/QtInstallerFramework/4.11/bin/binarycreator" ]; then
+            python -m pip install --break-system-packages aqtinstall || python -m pip install aqtinstall
+            aqt install-tool linux desktop tools_ifw --outputdir "$HOME/Qt"
+          fi
+
+      - name: Stage payload
+        env:
+          QT_DIR: ${{ env.QT_DIR }}
+        run: bash Installer/Linux/linuxdeploy.sh
+
+      - name: Build offline installer
+        env:
+          QT_DIR: ${{ env.QT_DIR }}
+        run: bash Installer/Linux/make-installer.sh
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: googleaiviewer-linux-installer
+          path: Installer/Linux/*.run
+          retention-days: 90

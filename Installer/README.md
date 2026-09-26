@@ -6,6 +6,8 @@ Offline installers built with the
 Component id (shared by all platforms): `com.googleaiviewer.app`
 Version single source: `project(VERSION ...)` in `CMakeLists.txt`.
 `GOOGLEAIVIEWER_VERSION` in the environment overrides it.
+Keep `<Version>` in each `config/config.xml` and `packages/.../meta/package.xml`
+in sync with `CMakeLists.txt` on bump day.
 
 ## Windows
 
@@ -37,8 +39,42 @@ set IFW_BIN=C:\Qt\Tools\QtInstallerFramework\4.11\bin
 offline installer. The payload dir (`packages/*/data/`) and `*.exe`
 outputs are gitignored.
 
-## macOS / Linux
+## Linux (Ubuntu 24.04+)
+
+Prerequisites: Qt 6.11.x `gcc_64`, IFW 4.x, `cmake`, `ninja-build`,
+`patchelf` (default locations are auto-detected; overrides below).
+
+```bash
+sudo apt install ninja-build patchelf libsecret-1-dev
+export QT_DIR=$HOME/Qt/6.11.1/gcc_64
+
+# 1. Build Release + stage packages/com.googleaiviewer.app/data/
+Installer/Linux/linuxdeploy.sh
+
+# Reuse an existing build tree instead of rebuilding:
+GOOGLEAIVIEWER_SKIP_BUILD=1 Installer/Linux/linuxdeploy.sh --build-dir build
+
+# 2. Create the offline installer
+Installer/Linux/make-installer.sh
+```
+
+Output: `Installer/Linux/GoogleAIViewer-<version>-offline.run`
+
+Notes:
+
+- Only `libQt6*` / `libicu*` / `libKF6*` are bundled (ldd closure over the
+  binary, every staged plugin, and every staged lib; `=> not found` Qt deps
+  resolve against `$QT_DIR/lib`). System libs (xcb, GL, fontconfig) are
+  never bundled; the launcher prints an `apt install` hint when missing.
+- `qt.conf` pins `Prefix=.`, `Libraries=lib`, `Plugins=plugins`; rpaths are
+  `$ORIGIN/lib` (binary), `$ORIGIN` (libs), `$ORIGIN/../../lib` (plugins).
+- `make-installer.sh` prefers IFW 4.11, else the numerically newest 4.x
+  (reverse-alphabetical lies: 4.12.0 beats 4.8.1 only with numeric compare),
+  and smoke-tests the staged payload headless
+  (`QT_QPA_PLATFORM=offscreen`, 10 s timeout).
+
+## macOS
 
 Not yet added. Follow the same shape when the time comes:
-`Installer/<OS>/{config/config.xml, packages/<same-component-id>/{meta,data/}}`
-plus `macdeploy.sh` / `linuxdeploy.sh` and `make-installer.sh`.
+`Installer/MacOS/{config/config.xml, packages/<same-component-id>/{meta,data/}}`
+plus `macdeploy.sh` and `make-installer.sh`.

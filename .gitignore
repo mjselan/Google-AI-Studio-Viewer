@@ -22,6 +22,10 @@ CMakeLists.txt.user
 .VSCodeCounter/
 CMakeUserPresets.json
 
+# Installers (Qt Installer Framework, staged payloads + outputs)
+Installer/*/packages/*/data/
+Installer/Linux/*.run
+
 # Qt Creator
 *.autosave
 *.pro.user*
@@ -64,6 +68,7 @@ build*.log
 # Local/dev notes
 tasklist.txt
 codereview.txt
+installer.md
 
 # Installers (staged payloads + built outputs, per platform)
 Installer/*/packages/*/data/

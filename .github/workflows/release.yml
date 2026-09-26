@@ -1,0 +1,68 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  release-linux:
+    name: Release installer (Ubuntu 24.04)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Derive version from tag
+        run: echo "GOOGLEAIVIEWER_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
+      - name: Install system deps
+        run: >
+          sudo apt-get update &&
+          sudo apt-get install -y ninja-build patchelf libsecret-1-dev
+          libgl1 libfontconfig1 libxcb-cursor0
+
+      - name: Install Qt 6.11
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.11.1
+          host: linux
+          target: desktop
+          arch: linux_gcc_64
+          cache: true
+
+      - name: Export QT_DIR
+        run: echo "QT_DIR=$(qmake -query QT_INSTALL_PREFIX)" >> "$GITHUB_ENV"
+
+      - name: Cache IFW
+        uses: actions/cache@v4
+        with:
+          path: ~/Qt/Tools/QtInstallerFramework
+          key: ifw-linux-4.11
+
+      - name: Install Qt Installer Framework
+        run: |
+          if [ ! -x "$HOME/Qt/Tools/QtInstallerFramework/4.11/bin/binarycreator" ]; then
+            python -m pip install --break-system-packages aqtinstall || python -m pip install aqtinstall
+            aqt install-tool linux desktop tools_ifw --outputdir "$HOME/Qt"
+          fi
+
+      - name: Stage payload
+        env:
+          QT_DIR: ${{ env.QT_DIR }}
+          GOOGLEAIVIEWER_VERSION: ${{ env.GOOGLEAIVIEWER_VERSION }}
+        run: bash Installer/Linux/linuxdeploy.sh
+
+      - name: Build offline installer
+        env:
+          QT_DIR: ${{ env.QT_DIR }}
+          GOOGLEAIVIEWER_VERSION: ${{ env.GOOGLEAIVIEWER_VERSION }}
+        run: bash Installer/Linux/make-installer.sh
+
+      - name: Attach to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: Installer/Linux/GoogleAIViewer-*-offline.run
