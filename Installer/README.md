@@ -76,6 +76,37 @@ Notes:
 
 ## macOS
 
-Not yet added. Follow the same shape when the time comes:
-`Installer/MacOS/{config/config.xml, packages/<same-component-id>/{meta,data/}}`
-plus `macdeploy.sh` and `make-installer.sh`.
+Prerequisites: Qt 6.11.x `macos` or `clang_64`, CMake + Ninja, Xcode CLT
+(default locations are auto-detected; overrides below).
+
+```bash
+export QT_DIR=$HOME/Qt/6.11.1/macos
+
+# 1. Build Release + .app + macdeployqt + stage packages/com.googleaiviewer.app/data/
+Installer/MacOS/macdeploy.sh
+
+# Reuse an existing build tree instead of rebuilding:
+GOOGLEAIVIEWER_SKIP_BUILD=1 Installer/MacOS/macdeploy.sh --build-dir build
+
+# Universal binary (arm64 + x86_64):
+Installer/MacOS/macdeploy.sh --universal
+
+# 2. Create the DMG installer (drag-and-drop, default)
+Installer/MacOS/make-installer.sh
+
+# Or create an IFW wizard DMG (requires IFW 4.x):
+Installer/MacOS/make-installer.sh --ifw
+```
+
+Output: `Installer/MacOS/GoogleAIViewer-<version>.dmg`
+
+Notes:
+
+- `macdeploy.sh` builds a Release `.app`, runs `macdeployqt` to inline Qt
+  libraries, and stages the result into `packages/com.googleaiviewer.app/data/`.
+  It validates with `otool -L`, `plutil -lint`, and `codesign --verify`.
+- `make-installer.sh` defaults to a drag-and-drop DMG via `hdiutil` (no IFW
+  needed). Use `--ifw` for an IFW wizard DMG (requires `binarycreator`).
+- The `.app` is ad-hoc signed by default. Set `CODESIGN_IDENTITY` to sign with
+  a real identity for distribution outside the App Store.
+- The payload dir (`packages/*/data/`) and `*.dmg` outputs are gitignored.

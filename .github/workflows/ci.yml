@@ -77,3 +77,57 @@ jobs:
           name: googleaiviewer-linux-installer
           path: Installer/Linux/*.run
           retention-days: 90
+
+  build-macos:
+    name: Build + installer (macOS 14)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Qt 6.11
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.11.1
+          host: macos
+          target: desktop
+          arch: macos
+          cache: true
+
+      - name: Export QT_DIR
+        run: echo "QT_DIR=$(qmake -query QT_INSTALL_PREFIX)" >> "$GITHUB_ENV"
+
+      - name: Configure (Debug)
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_PREFIX_PATH="$QT_DIR"
+          -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        run: cmake --build build --config Debug
+
+      - name: Test (headless)
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          if ctest --test-dir build -N 2>/dev/null | grep -qE "Test +#[0-9]+"; then
+            ctest --test-dir build --output-on-failure
+          else
+            echo "No tests configured; skipping."
+          fi
+
+      - name: Stage payload
+        env:
+          QT_DIR: ${{ env.QT_DIR }}
+        run: bash Installer/MacOS/macdeploy.sh
+
+      - name: Build DMG installer
+        env:
+          QT_DIR: ${{ env.QT_DIR }}
+        run: bash Installer/MacOS/make-installer.sh
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: googleaiviewer-macos-installer
+          path: Installer/MacOS/*.dmg
+          retention-days: 90
