@@ -128,6 +128,8 @@ jobs:
   build-windows:
     name: Build + installer (Windows)
     runs-on: windows-latest
+    env:
+      QT_DIR: C:\Qt\6.10.1\msvc2022_64
     steps:
       - uses: actions/checkout@v5
 
@@ -144,9 +146,6 @@ jobs:
           target: desktop
           arch: win64_msvc2022_64
           cache: true
-
-      - name: Export QT_DIR
-        run: echo "QT_DIR=$(qmake -query QT_INSTALL_PREFIX)" >> "$GITHUB_ENV"
 
       - name: Configure (Debug)
         run: >
@@ -182,14 +181,10 @@ jobs:
           }
 
       - name: Stage payload
-        env:
-          QT_DIR: ${{ env.QT_DIR }}
         shell: cmd
         run: call Installer\Windows\windeploy.bat
 
       - name: Build offline installer
-        env:
-          QT_DIR: ${{ env.QT_DIR }}
         shell: cmd
         run: call Installer\Windows\make-installer.bat
 
