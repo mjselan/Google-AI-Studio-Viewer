@@ -100,19 +100,21 @@ Plugins=plugins
 EOF
 
 # --- Bundle Qt libraries: ldd closure over the binary AND every staged
-# --- plugin, copying only libQt6*/libicu*/libKF6*. Never bundle system libs
-# --- (xcb, GL, fontconfig) -- the launcher preflights those instead.
-# --- NOTE: ldd reports "$ORIGIN"-unresolvable Qt deps of freshly staged
-# --- plugins as "=> not found" (system ld cache knows nothing of $QT_DIR),
-# --- so those are resolved against $QT_LIB_DIR explicitly.
+# --- plugin, copying only libQt6*/libicu*/libKF6* plus libqt6keychain
+# --- (FetchContent-built, lives in the build tree, not the Qt prefix).
+# --- Never bundle system libs (xcb, GL, fontconfig) -- the launcher
+# --- preflights those instead.
+# --- NOTE: ldd reports "$ORIGIN"-unresolvable deps of freshly staged files
+# --- as "=> not found" (system ld cache knows nothing of $QT_DIR or the
+# --- build tree), so those are resolved against $QT_LIB_DIR / $BUILD_DIR.
 QT_LIB_DIR="$QT_DIR/lib"
 copy_needed_libs() {
     local file="$1"
-    local line lib target src base
+    local line lib target src base found
     while IFS= read -r line; do
         lib="$(echo "$line" | awk '{print $1}')"
         case "$lib" in
-            libQt6*|libicu*|libKF6*) ;;
+            libQt6*|libicu*|libKF6*|libqt6keychain*|libQt6Keychain*) ;;
             *) continue ;;
         esac
         base="$(basename "$lib")"
@@ -123,8 +125,13 @@ copy_needed_libs() {
         elif [ -f "$QT_LIB_DIR/$base" ]; then
             src="$QT_LIB_DIR/$base"
         else
-            echo "WARNING: cannot resolve $base (needed by $file)" >&2
-            continue
+            found="$(find "$BUILD_DIR" -name "$base" -print -quit 2>/dev/null || true)"
+            if [ -n "$found" ]; then
+                src="$found"
+            else
+                echo "WARNING: cannot resolve $base (needed by $file)" >&2
+                continue
+            fi
         fi
         cp -L "$src" "$DATA_DIR/lib/$base"
         echo "bundled: $base"
@@ -143,6 +150,9 @@ for subset in $PLUGIN_SUBSETS; do
             case "$(basename "$plug")" in
                 # Skip database drivers and image formats the app never uses.
                 libqsqlmysql.so|libqsqlodbc.so|libqsqlpsql.so|libqsqlibase.so|libqsqlmimer.so|libqsqloci.so) continue ;;
+                # Skip TIFF: needs system libtiff.so.5 (24.04+ ships libtiff6),
+                # and the app never loads TIFFs -- an unloadable plugin is dead weight.
+                libqtiff.so) continue ;;
             esac
             cp -L "$plug" "$DATA_DIR/plugins/$subset/"
         done
@@ -150,8 +160,9 @@ for subset in $PLUGIN_SUBSETS; do
 done
 
 # Repeat the ldd closure over the binary, every staged plugin, and every
-# staged lib until no new libs appear (second-order plugin deps such as
-# libQt6XcbQpa/libQt6Svg resolve via $QT_LIB_DIR on the first pass).
+# staged lib until no new libs appear (second-order deps such as
+# libQt6XcbQpa/libQt6Svg resolve via $QT_LIB_DIR, libqt6keychain via the
+# build tree, on the first pass).
 for _pass in 1 2 3 4 5; do
     before="$(ls "$DATA_DIR/lib" | wc -l)"
     copy_needed_libs "$DATA_DIR/$APP_NAME.bin"

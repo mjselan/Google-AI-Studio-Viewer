@@ -62,10 +62,11 @@ Output: `Installer/Linux/GoogleAIViewer-<version>-offline.run`
 
 Notes:
 
-- Only `libQt6*` / `libicu*` / `libKF6*` are bundled (ldd closure over the
-  binary, every staged plugin, and every staged lib; `=> not found` Qt deps
-  resolve against `$QT_DIR/lib`). System libs (xcb, GL, fontconfig) are
-  never bundled; the launcher prints an `apt install` hint when missing.
+- Only `libQt6*` / `libicu*` / `libKF6*` plus `libqt6keychain*`
+  (FetchContent-built, resolved from the build tree) are bundled — ldd
+  closure over the binary, every staged plugin, and every staged lib.
+  System libs (xcb, GL, fontconfig) are never bundled; the launcher prints
+  an `apt install` hint when missing.
 - `qt.conf` pins `Prefix=.`, `Libraries=lib`, `Plugins=plugins`; rpaths are
   `$ORIGIN/lib` (binary), `$ORIGIN` (libs), `$ORIGIN/../../lib` (plugins).
 - `make-installer.sh` prefers IFW 4.11, else the numerically newest 4.x
