@@ -124,3 +124,78 @@ jobs:
           name: googleaiviewer-macos-installer
           path: Installer/MacOS/*.dmg
           retention-days: 90
+
+  build-windows:
+    name: Build + installer (Windows)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Setup MSVC dev environment
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
+      - name: Install Qt 6.10
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: 6.10.1
+          host: windows
+          target: desktop
+          arch: win64_msvc2022_64
+          cache: true
+
+      - name: Export QT_DIR
+        run: echo "QT_DIR=$(qmake -query QT_INSTALL_PREFIX)" >> "$GITHUB_ENV"
+
+      - name: Configure (Debug)
+        run: >
+          cmake -S . -B build -G Ninja
+          -DCMAKE_PREFIX_PATH="$env:QT_DIR"
+          -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Build
+        run: cmake --build build --config Debug
+
+      - name: Test (headless)
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QT_QPA_FONTDIR: C:/Windows/Fonts
+        run: |
+          if (ctest --test-dir build -N 2>$null | Select-String "Test +#[0-9]+") {
+            ctest --test-dir build --output-on-failure
+          } else {
+            Write-Host "No tests configured; skipping."
+          }
+
+      - name: Cache IFW
+        uses: actions/cache@v5
+        with:
+          path: ~/Qt/Tools/QtInstallerFramework
+          key: ifw-windows-4.11
+
+      - name: Install Qt Installer Framework
+        run: |
+          if (-not (Test-Path "$env:USERPROFILE\Qt\Tools\QtInstallerFramework\4.11\bin\binarycreator.exe")) {
+            python -m pip install aqtinstall
+            aqt install-tool windows desktop tools_ifw --outputdir "$env:USERPROFILE\Qt"
+          }
+
+      - name: Stage payload
+        env:
+          QT_DIR: ${{ env.QT_DIR }}
+        shell: cmd
+        run: call Installer\Windows\windeploy.bat
+
+      - name: Build offline installer
+        env:
+          QT_DIR: ${{ env.QT_DIR }}
+        shell: cmd
+        run: call Installer\Windows\make-installer.bat
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: googleaiviewer-windows-installer
+          path: Installer/Windows/*-offline.exe
+          retention-days: 90
