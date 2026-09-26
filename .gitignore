@@ -64,3 +64,9 @@ build*.log
 # Local/dev notes
 tasklist.txt
 codereview.txt
+
+# Installers (staged payloads + built outputs, per platform)
+Installer/*/packages/*/data/
+Installer/Windows/*.exe
+Installer/MacOS/*.dmg
+Installer/Linux/*.run
