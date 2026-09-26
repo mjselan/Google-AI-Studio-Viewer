@@ -76,17 +76,10 @@ jobs:
       - name: Derive version from tag
         run: echo "GOOGLEAIVIEWER_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
 
-      - name: Install Qt 6.10
-        uses: jurplel/install-qt-action@v4
-        with:
-          version: 6.10.1
-          host: mac
-          target: desktop
-          arch: macos
-          cache: true
-
-      - name: Export QT_DIR
-        run: echo "QT_DIR=$(qmake -query QT_INSTALL_PREFIX)" >> "$GITHUB_ENV"
+      - name: Install Qt 6
+        run: |
+          brew install qt@6
+          echo "QT_DIR=$(brew --prefix qt@6)" >> "$GITHUB_ENV"
 
       - name: Stage payload
         env:
