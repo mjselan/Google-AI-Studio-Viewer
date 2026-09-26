@@ -46,7 +46,7 @@ done
 # --- Resolve Qt ---
 QT_DIR="${QT_DIR_ARG:-${QT_DIR:-}}"
 if [ -z "$QT_DIR" ]; then
-    for cand in "$HOME/Qt/6.11.1/macos" "$HOME/Qt/6.11.1/clang_64" "/usr/local/opt/qt@6" "/opt/homebrew/opt/qt@6"; do
+    for cand in "$HOME/Qt/6.10.1/macos" "$HOME/Qt/6.10.1/clang_64" "$HOME/Qt/6.11.1/macos" "$HOME/Qt/6.11.1/clang_64" "/usr/local/opt/qt@6" "/opt/homebrew/opt/qt@6"; do
         if [ -x "$cand/bin/qmake" ]; then QT_DIR="$cand"; break; fi
     done
 fi

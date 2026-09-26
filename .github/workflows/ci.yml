@@ -84,10 +84,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Install Qt 6.11
+      - name: Install Qt 6.10
         uses: jurplel/install-qt-action@v4
         with:
-          version: 6.11.1
+          version: 6.10.1
           host: mac
           target: desktop
           arch: macos
