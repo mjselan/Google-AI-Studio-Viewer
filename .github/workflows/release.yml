@@ -103,8 +103,6 @@ jobs:
   release-windows:
     name: Release installer (Windows)
     runs-on: windows-latest
-    env:
-      QT_DIR: C:\Qt\6.10.1\msvc2022_64
     steps:
       - uses: actions/checkout@v5
 
@@ -123,7 +121,6 @@ jobs:
           host: windows
           target: desktop
           arch: win64_msvc2022_64
-          outputdir: C:\Qt
           cache: true
 
       - name: Cache IFW
