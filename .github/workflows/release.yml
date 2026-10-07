@@ -135,10 +135,13 @@ jobs:
 
       - name: Install Qt Installer Framework
         run: |
-          if (-not (Test-Path "$env:USERPROFILE\Qt\Tools\QtInstallerFramework\4.11\bin\binarycreator.exe")) {
+          $bc = Get-ChildItem "$env:USERPROFILE\Qt\Tools\QtInstallerFramework\*\bin\binarycreator.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $bc) {
             python -m pip install aqtinstall
             aqt install-tool windows desktop tools_ifw --outputdir "$env:USERPROFILE\Qt"
+            $bc = Get-ChildItem "$env:USERPROFILE\Qt\Tools\QtInstallerFramework\*\bin\binarycreator.exe" -ErrorAction SilentlyContinue | Sort-Object FullName -Descending | Select-Object -First 1
           }
+          if ($bc) { echo "IFW_BIN=$($bc.DirectoryName)" >> $env:GITHUB_ENV; Write-Host "IFW: $($bc.FullName)" } else { Write-Error "binarycreator.exe not found after install"; exit 1 }
 
       - name: Stage payload
         env:
@@ -150,6 +153,7 @@ jobs:
       - name: Build offline installer
         env:
           QT_DIR: ${{ env.QT_DIR }}
+          IFW_BIN: ${{ env.IFW_BIN }}
           GOOGLEAIVIEWER_VERSION: ${{ env.GOOGLEAIVIEWER_VERSION }}
         shell: cmd
         run: call Installer\Windows\make-installer.bat

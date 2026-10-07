@@ -78,6 +78,10 @@ if defined IFW_BIN call :CheckIfwBin "%IFW_BIN%"
 if defined BINARYCREATOR goto :eof
 if defined QT_DIR call :CheckIfwBin "!QT_DIR!\..\..\Tools\QtInstallerFramework"
 if defined BINARYCREATOR goto :eof
+if defined USERPROFILE (
+    if exist "!USERPROFILE!\Qt\Tools\QtInstallerFramework" call :CheckIfwBin "!USERPROFILE!\Qt\Tools\QtInstallerFramework"
+)
+if defined BINARYCREATOR goto :eof
 if exist "C:\Qt\Tools\QtInstallerFramework" call :CheckIfwBin "C:\Qt\Tools\QtInstallerFramework"
 if defined BINARYCREATOR goto :eof
 for /f "delims=" %%B in ('where binarycreator.exe 2^>nul') do (
