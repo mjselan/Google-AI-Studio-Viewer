@@ -15,10 +15,94 @@
 #include <QAction>
 #include <QClipboard>
 #include <QGuiApplication>
+#include <QRegularExpression>
+#include <QHash>
 
+static QString sanitizeLatexMath(const QString &text)
+{
+    // Matches inline math: $...$ or display math: $$...$$
+    static const QRegularExpression mathBlockRegex(R"(\${1,2}(.+?)\${1,2})");
+
+    QString result;
+    int lastIndex = 0;
+    auto it = mathBlockRegex.globalMatch(text);
+
+    while (it.hasNext())
+    {
+        auto match = it.next();
+
+        // Append text prior to this match
+        result.append(text.sliced(lastIndex, match.capturedStart() - lastIndex));
+
+        QString expr = match.captured(1).trimmed();
+
+        // 1. Fractions: \frac{a}{b} -> (a / b)
+        static const QRegularExpression fracRegex(R"(\\frac\{([^}]+)\}\{([^}]+)\})");
+        expr.replace(fracRegex, QStringLiteral("(\\1 / \\2)"));
+
+        // 2. Square roots: \sqrt{x} -> √(x)
+        static const QRegularExpression sqrtRegex(R"(\\sqrt\{([^}]+)\})");
+        expr.replace(sqrtRegex, QStringLiteral("√(\\1)"));
+
+        // 3. Remove \text{...} wrappers -> ...
+        static const QRegularExpression textRegex(R"(\\text\{([^}]+)\})");
+        expr.replace(textRegex, QStringLiteral("\\1"));
+
+        // 4. Spacing commands (\,, \;, \!, \quad) and comma-glued units (e.g. "4.7,\Omega" -> "4.7 \Omega")
+        expr.replace(QRegularExpression(R"(\\,|\\;|\\!|\\quad)"), QStringLiteral(" "));
+        expr.replace(QRegularExpression(R"(,(\\[a-zA-Z]))"), QStringLiteral(" \\1"));
+
+        // 5. Greek Letters (Upper & Lower)
+        static const QList<QPair<QString, QString>> greek = {
+            {R"(\Omega)", "Ω"}, {R"(\omega)", "ω"}, {R"(\beta)", "β"},  {R"(\alpha)", "α"},
+            {R"(\Delta)", "Δ"}, {R"(\delta)", "δ"}, {R"(\mu)", "µ"},    {R"(\pi)", "π"},
+            {R"(\theta)", "θ"}, {R"(\Theta)", "Θ"}, {R"(\lambda)", "λ"},{R"(\Lambda)", "Λ"},
+            {R"(\sigma)", "σ"}, {R"(\Sigma)", "Σ"}, {R"(\tau)", "τ"},  {R"(\gamma)", "γ"},
+            {R"(\phi)", "φ"},   {R"(\Phi)", "Φ"},   {R"(\epsilon)", "ε"}
+        };
+        for (const auto &pair : greek)
+            expr.replace(pair.first, pair.second);
+
+        // 6. Common Math Symbols & Relations
+        static const QList<QPair<QString, QString>> symbols = {
+            {R"(\approx)", "≈"}, {R"(\pm)", "±"},     {R"(\mp)", "∓"},
+            {R"(\times)", "×"},  {R"(\cdot)", "·"},   {R"(\div)", "÷"},
+            {R"(\le)", "≤"},     {R"(\leq)", "≤"},    {R"(\ge)", "≥"},     {R"(\geq)", "≥"},
+            {R"(\neq)", "≠"},    {R"(\equiv)", "≡"},  {R"(\infty)", "∞"},
+            {R"(\degree)", "°"}, {R"(\circ)", "°"},   {R"(\to)", "→"},     {R"(\rightarrow)", "→"}
+        };
+        for (const auto &pair : symbols)
+            expr.replace(pair.first, pair.second);
+
+        // 7. Subscripts: A_{OL} -> A<sub>OL</sub>, h_FE -> h<sub>FE</sub>
+        static const QRegularExpression subBrace(R"(_\{([^}]+)\})");
+        expr.replace(subBrace, QStringLiteral("<sub>\\1</sub>"));
+        static const QRegularExpression subSingle(R"(_([a-zA-Z0-9]+))");
+        expr.replace(subSingle, QStringLiteral("<sub>\\1</sub>"));
+
+        // 8. Superscripts: x^{2} -> x<sup>2</sup>, x^3 -> x<sup>3</sup>
+        static const QRegularExpression supBrace(R"(\^\{([^}]+)\})");
+        expr.replace(supBrace, QStringLiteral("<sup>\\1</sup>"));
+        static const QRegularExpression supSingle(R"(\^([a-zA-Z0-9]+))");
+        expr.replace(supSingle, QStringLiteral("<sup>\\1</sup>"));
+
+        // 9. Clean up stray braces
+        expr.replace(QLatin1Char('{'), QString()).replace(QLatin1Char('}'), QString());
+
+        result.append(expr.trimmed());
+        lastIndex = match.capturedEnd();
+    }
+
+    // Append remainder of the string
+    result.append(text.sliced(lastIndex));
+    return result;
+}
 static QString markdownToHtml(const QString &markdown)
 {
-    QString md = markdown;
+    // Step 1: Pre-process LaTeX math to clean Unicode and HTML tags
+    QString md = sanitizeLatexMath(markdown);
+
+    // Step 2: Handle strikethrough and markdown task checkboxes
     md.replace(QRegularExpression("~~(.+?)~~"), "<s>\\1</s>");
     md.replace("- [x]", "- &#x2611;");
     md.replace("- [ ]", "- &#x2610;");
@@ -27,6 +111,7 @@ static QString markdownToHtml(const QString &markdown)
     doc.setMarkdown(md);
     QString html = doc.toHtml();
 
+    // Extract inside <body>
     int bodyStart = html.indexOf("<body");
     if (bodyStart < 0)
         return html;
@@ -42,7 +127,6 @@ static QString markdownToHtml(const QString &markdown)
 
     return body;
 }
-
 static QPixmap fitImageWidth(const QPixmap &src, int maxWidth = 640)
 {
     if (src.width() <= maxWidth)
