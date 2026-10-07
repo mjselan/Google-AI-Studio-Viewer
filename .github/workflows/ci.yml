@@ -145,6 +145,9 @@ jobs:
           arch: win64_msvc2022_64
           cache: true
 
+      - name: Export QT_DIR
+        run: echo "QT_DIR=$env:QT_ROOT_DIR" >> $env:GITHUB_ENV
+
       - name: Configure (Debug)
         run: >
           cmake -S . -B build -G Ninja
@@ -179,10 +182,14 @@ jobs:
           }
 
       - name: Stage payload
+        env:
+          QT_DIR: ${{ env.QT_DIR }}
         shell: cmd
         run: call Installer\Windows\windeploy.bat
 
       - name: Build offline installer
+        env:
+          QT_DIR: ${{ env.QT_DIR }}
         shell: cmd
         run: call Installer\Windows\make-installer.bat
 

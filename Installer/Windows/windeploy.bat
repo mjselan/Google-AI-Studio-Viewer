@@ -5,7 +5,9 @@ rem
 rem Stages: Installer\Windows\packages\com.googleaiviewer.app\data\
 rem
 rem Environment overrides:
-rem   QT_DIR                   Qt kit prefix, default C:\Qt\6.11.1\msvc2022_64
+rem   QT_DIR                   Qt kit prefix, default C:\Qt\6.11.1\msvc2022_64 (local dev).
+rem                            CI sets QT_DIR from QT_ROOT_DIR (Qt 6.10.1).
+rem                            If QT_DIR is unset, QT_ROOT_DIR is used, then 6.11.1/6.10.1 fallbacks.
 rem   GOOGLEAIVIEWER_VERSION   override version, default parsed from CMakeLists
 rem   GOOGLEAIVIEWER_SKIP_BUILD=1  skip cmake build, stage an existing exe
 rem   GOOGLEAIVIEWER_EXE       explicit exe to stage in skip mode
@@ -35,12 +37,22 @@ if defined GOOGLEAIVIEWER_VERSION (
 )
 echo Google AI Studio Viewer version: !APP_VERSION!
 
-rem --- Qt location ------------------------------------------------------------
+rem --- Qt location: QT_DIR wins, else QT_ROOT_DIR (jurplel/install-qt-action), else local defaults
+rem --- Local dev uses Qt 6.11, CI pins Qt 6.10 -> accept both.
+if not defined QT_DIR (
+    if defined QT_ROOT_DIR set "QT_DIR=!QT_ROOT_DIR!"
+)
 if not defined QT_DIR set "QT_DIR=C:\Qt\6.11.1\msvc2022_64"
 if not exist "!QT_DIR!\bin\windeployqt6.exe" (
     if not exist "!QT_DIR!\bin\windeployqt.exe" (
+        call :ResolveQtFallback
+    )
+)
+if not exist "!QT_DIR!\bin\windeployqt6.exe" (
+    if not exist "!QT_DIR!\bin\windeployqt.exe" (
         echo ERROR: no windeployqt found under "!QT_DIR!\bin"
-        echo HINT: set QT_DIR to your Qt kit, for example C:\Qt\6.11.1\msvc2022_64
+        echo HINT: set QT_DIR or QT_ROOT_DIR to your Qt kit, for example C:\Qt\6.11.1\msvc2022_64
+        echo HINT: CI example: QT_DIR^=D:\a\Google-AI-Studio-Viewer\Qt\6.10.1\msvc2022_64
         exit /b 1
     )
 )
@@ -175,6 +187,43 @@ exit /b 0
 rem ============================================================================
 rem Subroutines
 rem ============================================================================
+
+:ResolveQtFallback
+rem Try well-known local kit locations when the configured QT_DIR has no windeployqt.
+rem QT_ROOT_DIR (CI) was already mapped above; this only covers local defaults.
+for %%Q in (
+    "C:\Qt\6.11.1\msvc2022_64"
+    "C:\Qt\6.10.1\msvc2022_64"
+) do (
+    if exist "%%~Q\bin\windeployqt6.exe" (
+        set "QT_DIR=%%~Q"
+        echo Using Qt fallback: !QT_DIR!
+        goto :eof
+    )
+    if exist "%%~Q\bin\windeployqt.exe" (
+        set "QT_DIR=%%~Q"
+        echo Using Qt fallback: !QT_DIR!
+        goto :eof
+    )
+)
+if defined USERPROFILE (
+    for %%Q in (
+        "%USERPROFILE%\Qt\6.11.1\msvc2022_64"
+        "%USERPROFILE%\Qt\6.10.1\msvc2022_64"
+    ) do (
+        if exist "%%~Q\bin\windeployqt6.exe" (
+            set "QT_DIR=%%~Q"
+            echo Using Qt fallback: !QT_DIR!
+            goto :eof
+        )
+        if exist "%%~Q\bin\windeployqt.exe" (
+            set "QT_DIR=%%~Q"
+            echo Using Qt fallback: !QT_DIR!
+            goto :eof
+        )
+    )
+)
+goto :eof
 
 :ParseVersion
 set "APP_VERSION=1.0.0"

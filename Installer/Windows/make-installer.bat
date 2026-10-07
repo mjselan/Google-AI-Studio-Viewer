@@ -6,7 +6,8 @@ rem Produces: Installer\Windows\GoogleAIViewer-<version>-offline.exe
 rem Run windeploy.bat first to stage the payload.
 rem
 rem Environment overrides:
-rem   QT_DIR                   Qt kit prefix, default C:\Qt\6.11.1\msvc2022_64
+rem   QT_DIR                   Qt kit prefix, default C:\Qt\6.11.1\msvc2022_64 (local dev).
+rem                            CI sets QT_DIR from QT_ROOT_DIR (Qt 6.10.1).
 rem   GOOGLEAIVIEWER_VERSION   override version, default parsed from CMakeLists
 rem   IFW_BIN                  explicit binarycreator.exe path or its bin dir
 rem ============================================================================
@@ -25,6 +26,9 @@ if defined GOOGLEAIVIEWER_VERSION (
 )
 echo Google AI Studio Viewer version: !APP_VERSION!
 
+if not defined QT_DIR (
+    if defined QT_ROOT_DIR set "QT_DIR=!QT_ROOT_DIR!"
+)
 if not defined QT_DIR set "QT_DIR=C:\Qt\6.11.1\msvc2022_64"
 
 if not exist "!DATA_DIR!\GoogleAIViewer.exe" (
