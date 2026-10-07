@@ -52,7 +52,40 @@ if [ ! -d "$APP_BUNDLE" ]; then
 fi
 
 DMG_OUT="$SCRIPT_DIR/GoogleAIViewer-$VERSION.dmg"
-rm -f "$DMG_OUT"
+VOLUME_NAME="${DMG_VOLUME_NAME:-Google AI Studio Viewer}"
+
+# --- hdiutil is flaky on shared CI runners ("Resource busy") when a previous
+# --- attempt left /Volumes/<name> mounted. Detach stale mounts before/after,
+# --- retry a few times. Do NOT kill Finder or wipe /tmp globally.
+detach_stale_dmg() {
+    local vol="/Volumes/$VOLUME_NAME"
+    if [ -e "$vol" ]; then
+        hdiutil detach "$vol" -force 2>/dev/null \
+            || diskutil unmount force "$vol" 2>/dev/null \
+            || true
+    fi
+}
+
+create_dmg() {
+    local src="$1"
+    local attempt=1 max_attempts=3
+    while [ "$attempt" -le "$max_attempts" ]; do
+        detach_stale_dmg
+        rm -f "$DMG_OUT"
+        if hdiutil create -volname "$VOLUME_NAME" \
+            -srcfolder "$src" \
+            -ov -format UDZO \
+            "$DMG_OUT"; then
+            detach_stale_dmg
+            return 0
+        fi
+        echo "hdiutil create failed (attempt $attempt/$max_attempts), retrying..." >&2
+        sleep 5
+        attempt=$((attempt + 1))
+    done
+    echo "ERROR: hdiutil create failed after $max_attempts attempts." >&2
+    return 1
+}
 
 if [ "$USE_IFW" -eq 1 ]; then
     # --- IFW wizard DMG ---
@@ -110,18 +143,13 @@ if [ "$USE_IFW" -eq 1 ]; then
     chmod +x "$IFW_INSTALLER"
 
     # Wrap the IFW installer in a DMG
-    VOLUME_NAME="${DMG_VOLUME_NAME:-Google AI Studio Viewer}"
-    hdiutil create -volname "$VOLUME_NAME" \
-        -srcfolder "$IFW_INSTALLER" \
-        -ov -format UDZO \
-        "$DMG_OUT"
+    create_dmg "$IFW_INSTALLER"
     rm -f "$IFW_INSTALLER"
 
 else
     # --- Drag-and-drop DMG (default) ---
     echo "Building drag-and-drop DMG..."
 
-    VOLUME_NAME="${DMG_VOLUME_NAME:-Google AI Studio Viewer}"
     WINDOW_SIZE="${DMG_WINDOW_SIZE:-600 400}"
 
     # Create a temporary directory for the DMG layout
@@ -132,11 +160,8 @@ else
     cp -R "$APP_BUNDLE" "$TMP_DIR/"
     ln -s /Applications "$TMP_DIR/Applications"
 
-    # Create the DMG
-    hdiutil create -volname "$VOLUME_NAME" \
-        -srcfolder "$TMP_DIR" \
-        -ov -format UDZO \
-        "$DMG_OUT"
+    # Create the DMG (with stale-mount detach + retry for busy CI runners)
+    create_dmg "$TMP_DIR"
 
     # Set window layout (optional, for a polished look)
     # This is a nice-to-have; the DMG works without it
