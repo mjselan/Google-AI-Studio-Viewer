@@ -53,9 +53,9 @@ fi
 
 # --- Stamp the real version into IFW metadata (used by the --ifw path) ---------
 for _f in "$SCRIPT_DIR/config/config.xml" "$SCRIPT_DIR/packages/$COMPONENT_ID/meta/package.xml"; do
-    sed -i'' "s|<Version>[^<]*</Version>|<Version>$VERSION</Version>|" "$_f"
+    sed -i '' "s|<Version>[^<]*</Version>|<Version>$VERSION</Version>|" "$_f"
 done
-sed -i'' "s|<ReleaseDate>[^<]*</ReleaseDate>|<ReleaseDate>$(date +%F)</ReleaseDate>|" \
+sed -i '' "s|<ReleaseDate>[^<]*</ReleaseDate>|<ReleaseDate>$(date +%F)</ReleaseDate>|" \
     "$SCRIPT_DIR/packages/$COMPONENT_ID/meta/package.xml"
 echo "Stamped installer metadata version: $VERSION"
 
