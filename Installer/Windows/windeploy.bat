@@ -5,9 +5,10 @@ rem
 rem Stages: Installer\Windows\packages\com.googleaiviewer.app\data\
 rem
 rem Environment overrides:
-rem   QT_DIR                   Qt kit prefix, default C:\Qt\6.11.1\msvc2022_64 (local dev).
-rem                            CI sets QT_DIR from QT_ROOT_DIR (Qt 6.10.1).
-rem                            If QT_DIR is unset, QT_ROOT_DIR is used, then 6.11.1/6.10.1 fallbacks.
+rem   QT_DIR                   Qt kit prefix, default C:\Qt\<QT_VERSION>\msvc2022_64
+rem                            (QT_VERSION from qt-versions.env; local dev).
+rem                            CI sets QT_DIR from QT_ROOT_DIR (Windows pin).
+rem                            If QT_DIR is unset, QT_ROOT_DIR is used, then file-version fallbacks.
 rem   GOOGLEAIVIEWER_VERSION   override version, default parsed from CMakeLists
 rem   GOOGLEAIVIEWER_SKIP_BUILD=1  skip cmake build, stage an existing exe
 rem   GOOGLEAIVIEWER_EXE       explicit exe to stage in skip mode
@@ -37,12 +38,28 @@ if defined GOOGLEAIVIEWER_VERSION (
 )
 echo Google AI Studio Viewer version: !APP_VERSION!
 
+rem --- Qt version pins: qt-versions.env is the single source of truth ------------
+rem --- QT_VERSION = local default; QT_VERSION_WINDOWS_CI = CI installer pin.
+rem --- Explicit env values win over the file (one-off overrides keep working).
+if defined QT_VERSION set "_QT_VER_ENV=!QT_VERSION!"
+if defined QT_VERSION_WINDOWS_CI set "_QT_WINCI_ENV=!QT_VERSION_WINDOWS_CI!"
+if not defined QT_VERSION set "QT_VERSION=6.11.1"
+if not defined QT_VERSION_WINDOWS_CI set "QT_VERSION_WINDOWS_CI=6.10.1"
+if exist "%ROOT%\qt-versions.env" (
+    for /f "usebackq tokens=1* delims==" %%V in ("%ROOT%\qt-versions.env") do (
+        set "KEY=%%V"
+        if not "!KEY:~0,1!"=="#" if not "%%V"=="" set "%%V=%%W"
+    )
+)
+if defined _QT_VER_ENV set "QT_VERSION=!_QT_VER_ENV!"
+if defined _QT_WINCI_ENV set "QT_VERSION_WINDOWS_CI=!_QT_WINCI_ENV!"
+set "_QT_VER_ENV=" & set "_QT_WINCI_ENV="
+
 rem --- Qt location: QT_DIR wins, else QT_ROOT_DIR (jurplel/install-qt-action), else local defaults
-rem --- Local dev uses Qt 6.11, CI pins Qt 6.10 -> accept both.
 if not defined QT_DIR (
     if defined QT_ROOT_DIR set "QT_DIR=!QT_ROOT_DIR!"
 )
-if not defined QT_DIR set "QT_DIR=C:\Qt\6.11.1\msvc2022_64"
+if not defined QT_DIR set "QT_DIR=C:\Qt\!QT_VERSION!\msvc2022_64"
 if not exist "!QT_DIR!\bin\windeployqt6.exe" (
     if not exist "!QT_DIR!\bin\windeployqt.exe" (
         call :ResolveQtFallback
@@ -51,8 +68,8 @@ if not exist "!QT_DIR!\bin\windeployqt6.exe" (
 if not exist "!QT_DIR!\bin\windeployqt6.exe" (
     if not exist "!QT_DIR!\bin\windeployqt.exe" (
         echo ERROR: no windeployqt found under "!QT_DIR!\bin"
-        echo HINT: set QT_DIR or QT_ROOT_DIR to your Qt kit, for example C:\Qt\6.11.1\msvc2022_64
-        echo HINT: CI example: QT_DIR^=D:\a\Google-AI-Studio-Viewer\Qt\6.10.1\msvc2022_64
+        echo HINT: set QT_DIR or QT_ROOT_DIR to your Qt kit, for example C:\Qt\!QT_VERSION!\msvc2022_64
+        echo HINT: CI example: QT_DIR^=D:\a\Google-AI-Studio-Viewer\Qt\!QT_VERSION_WINDOWS_CI!\msvc2022_64
         exit /b 1
     )
 )
@@ -192,8 +209,8 @@ rem ============================================================================
 rem Try well-known local kit locations when the configured QT_DIR has no windeployqt.
 rem QT_ROOT_DIR (CI) was already mapped above; this only covers local defaults.
 for %%Q in (
-    "C:\Qt\6.11.1\msvc2022_64"
-    "C:\Qt\6.10.1\msvc2022_64"
+    "C:\Qt\!QT_VERSION!\msvc2022_64"
+    "C:\Qt\!QT_VERSION_WINDOWS_CI!\msvc2022_64"
 ) do (
     if exist "%%~Q\bin\windeployqt6.exe" (
         set "QT_DIR=%%~Q"
@@ -208,8 +225,8 @@ for %%Q in (
 )
 if defined USERPROFILE (
     for %%Q in (
-        "%USERPROFILE%\Qt\6.11.1\msvc2022_64"
-        "%USERPROFILE%\Qt\6.10.1\msvc2022_64"
+        "!USERPROFILE!\Qt\!QT_VERSION!\msvc2022_64"
+        "!USERPROFILE!\Qt\!QT_VERSION_WINDOWS_CI!\msvc2022_64"
     ) do (
         if exist "%%~Q\bin\windeployqt6.exe" (
             set "QT_DIR=%%~Q"

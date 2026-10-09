@@ -21,6 +21,17 @@ if [ -z "${VERSION:-}" ]; then
     echo "ERROR: could not determine version (set GOOGLEAIVIEWER_VERSION)." >&2
     exit 1
 fi
+echo "Version: $VERSION"
+
+# --- Stamp the real version into IFW metadata ---------------------------------
+# --- Add/Remove programs and IFW update detection both read <Version> here.
+# --- Without this every installer advertises 1.0.0 and updates are never offered.
+for _f in "$SCRIPT_DIR/config/config.xml" "$SCRIPT_DIR/packages/com.googleaiviewer.app/meta/package.xml"; do
+    sed -i "s|<Version>[^<]*</Version>|<Version>$VERSION</Version>|" "$_f"
+done
+sed -i "s|<ReleaseDate>[^<]*</ReleaseDate>|<ReleaseDate>$(date +%F)</ReleaseDate>|" \
+    "$SCRIPT_DIR/packages/com.googleaiviewer.app/meta/package.xml"
+echo "Stamped installer metadata version: $VERSION"
 
 DATA_DIR="$SCRIPT_DIR/packages/com.googleaiviewer.app/data"
 if [ ! -x "$DATA_DIR/GoogleAIViewer.bin" ]; then

@@ -51,6 +51,14 @@ if [ ! -d "$APP_BUNDLE" ]; then
     exit 1
 fi
 
+# --- Stamp the real version into IFW metadata (used by the --ifw path) ---------
+for _f in "$SCRIPT_DIR/config/config.xml" "$SCRIPT_DIR/packages/$COMPONENT_ID/meta/package.xml"; do
+    sed -i'' "s|<Version>[^<]*</Version>|<Version>$VERSION</Version>|" "$_f"
+done
+sed -i'' "s|<ReleaseDate>[^<]*</ReleaseDate>|<ReleaseDate>$(date +%F)</ReleaseDate>|" \
+    "$SCRIPT_DIR/packages/$COMPONENT_ID/meta/package.xml"
+echo "Stamped installer metadata version: $VERSION"
+
 DMG_OUT="$SCRIPT_DIR/GoogleAIViewer-$VERSION.dmg"
 VOLUME_NAME="${DMG_VOLUME_NAME:-Google AI Studio Viewer}"
 

@@ -1,8 +1,12 @@
 # Qt6 Build Environment
 
+Qt version pins live in `qt-versions.env` at the repo root (`QT_VERSION`
+= local default, `QT_VERSION_WINDOWS_CI` = pinned CI version). All build
+scripts read it automatically.
+
 ## Environment Variables
 ```
-QT_DIR=C:\Qt\6.11.1\msvc2022_64
+QT_DIR=C:\Qt\<QT_VERSION>\msvc2022_64
 PATH=%QT_DIR%\bin;%PATH%
 ```
 

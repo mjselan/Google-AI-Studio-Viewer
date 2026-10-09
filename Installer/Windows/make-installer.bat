@@ -6,8 +6,9 @@ rem Produces: Installer\Windows\GoogleAIViewer-<version>-offline.exe
 rem Run windeploy.bat first to stage the payload.
 rem
 rem Environment overrides:
-rem   QT_DIR                   Qt kit prefix, default C:\Qt\6.11.1\msvc2022_64 (local dev).
-rem                            CI sets QT_DIR from QT_ROOT_DIR (Qt 6.10.1).
+rem   QT_DIR                   Qt kit prefix, default C:\Qt\<QT_VERSION>\msvc2022_64
+rem                            (QT_VERSION from qt-versions.env; local dev).
+rem                            CI sets QT_DIR from QT_ROOT_DIR (Windows version pin).
 rem   GOOGLEAIVIEWER_VERSION   override version, default parsed from CMakeLists
 rem   IFW_BIN                  explicit binarycreator.exe path or its bin dir
 rem ============================================================================
@@ -16,6 +17,7 @@ setlocal EnableDelayedExpansion
 set "SCRIPT_DIR=%~dp0"
 set "ROOT=%SCRIPT_DIR%..\.."
 set "PKG_DIR=%SCRIPT_DIR%packages\com.googleaiviewer.app"
+set "PKG_XML=%PKG_DIR%\meta\package.xml"
 set "DATA_DIR=%PKG_DIR%\data"
 set "CONFIG=%SCRIPT_DIR%config\config.xml"
 
@@ -26,10 +28,25 @@ if defined GOOGLEAIVIEWER_VERSION (
 )
 echo Google AI Studio Viewer version: !APP_VERSION!
 
+rem --- Qt version pins: qt-versions.env is the single source of truth ------------
+rem --- Explicit env values win over the file (one-off overrides keep working).
+if defined QT_VERSION set "_QT_VER_ENV=!QT_VERSION!"
+if defined QT_VERSION_WINDOWS_CI set "_QT_WINCI_ENV=!QT_VERSION_WINDOWS_CI!"
+if not defined QT_VERSION set "QT_VERSION=6.11.1"
+if not defined QT_VERSION_WINDOWS_CI set "QT_VERSION_WINDOWS_CI=6.10.1"
+if exist "%ROOT%\qt-versions.env" (
+    for /f "usebackq tokens=1* delims==" %%V in ("%ROOT%\qt-versions.env") do (
+        set "KEY=%%V"
+        if not "!KEY:~0,1!"=="#" if not "%%V"=="" set "%%V=%%W"
+    )
+)
+if defined _QT_VER_ENV set "QT_VERSION=!_QT_VER_ENV!"
+if defined _QT_WINCI_ENV set "QT_VERSION_WINDOWS_CI=!_QT_WINCI_ENV!"
+set "_QT_VER_ENV=" & set "_QT_WINCI_ENV="
 if not defined QT_DIR (
     if defined QT_ROOT_DIR set "QT_DIR=!QT_ROOT_DIR!"
 )
-if not defined QT_DIR set "QT_DIR=C:\Qt\6.11.1\msvc2022_64"
+if not defined QT_DIR set "QT_DIR=C:\Qt\!QT_VERSION!\msvc2022_64"
 
 if not exist "!DATA_DIR!\GoogleAIViewer.exe" (
     echo ERROR: payload not staged, "!DATA_DIR!\GoogleAIViewer.exe" missing
@@ -40,6 +57,20 @@ if not exist "!CONFIG!" (
     echo ERROR: installer config missing: "!CONFIG!"
     exit /b 1
 )
+if not exist "!PKG_XML!" (
+    echo ERROR: package metadata missing: "!PKG_XML!"
+    exit /b 1
+)
+
+rem --- Stamp the real version into IFW metadata ---------------------------------
+rem --- Settings/Apps and IFW update detection both read <Version> from these files.
+rem --- Without this every installer advertises 1.0.0 and updates are never offered.
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; $c=[xml](Get-Content '!CONFIG!'); ($c.SelectSingleNode('/Installer/Version')).InnerText='!APP_VERSION!'; $c.Save('!CONFIG!'); $p=[xml](Get-Content '!PKG_XML!'); ($p.SelectSingleNode('/Package/Version')).InnerText='!APP_VERSION!'; ($p.SelectSingleNode('/Package/ReleaseDate')).InnerText=[string](Get-Date -Format 'yyyy-MM-dd'); $p.Save('!PKG_XML!')"
+if errorlevel 1 (
+    echo ERROR: failed to stamp installer version metadata
+    exit /b 1
+)
+echo Stamped installer metadata version: !APP_VERSION!
 
 call :FindBinaryCreator
 if not defined BINARYCREATOR (

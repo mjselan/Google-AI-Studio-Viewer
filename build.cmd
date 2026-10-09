@@ -4,7 +4,19 @@ setlocal enabledelayedexpansion
 set "vcvars=C:\Program Files\Microsoft Visual Studio\18\Community\VC\Auxiliary\Build\vcvars64.bat"
 set "cmakeGen=Ninja"
 set "ninja=C:\Program Files\Microsoft Visual Studio\18\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\Ninja\ninja.exe"
-set "qtPrefix=C:/Qt/6.11.1/msvc2022_64"
+rem --- Qt version pins: qt-versions.env is the single source of truth ---
+rem --- Explicit env values win over the file (one-off overrides keep working).
+if defined QT_VERSION set "_QT_VER_ENV=!QT_VERSION!"
+if not defined QT_VERSION set "QT_VERSION=6.11.1"
+if exist "%~dp0qt-versions.env" (
+    for /f "usebackq tokens=1* delims==" %%V in ("%~dp0qt-versions.env") do (
+        set "KEY=%%V"
+        if not "!KEY:~0,1!"=="#" if not "%%V"=="" set "%%V=%%W"
+    )
+)
+if defined _QT_VER_ENV set "QT_VERSION=!_QT_VER_ENV!"
+set "_QT_VER_ENV="
+set "qtPrefix=C:/Qt/!QT_VERSION!/msvc2022_64"
 set "buildDir=build"
 set "config=Debug"
 set "target="

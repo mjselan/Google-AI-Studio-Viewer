@@ -25,7 +25,7 @@ Output: `Installer\Windows\GoogleAIViewer-<version>-offline.exe`
 ### Useful overrides
 
 ```cmd
-set QT_DIR=C:\Qt\6.11.1\msvc2022_64
+set QT_DIR=C:\Qt\<QT_VERSION>\msvc2022_64
 set GOOGLEAIVIEWER_VERSION=1.0.0
 set GOOGLEAIVIEWER_SKIP_BUILD=1
 set GOOGLEAIVIEWER_EXE=C:\path\to\GoogleAIViewer.exe
@@ -41,12 +41,12 @@ outputs are gitignored.
 
 ## Linux (Ubuntu 24.04+)
 
-Prerequisites: Qt 6.11.x `gcc_64`, IFW 4.x, `cmake`, `ninja-build`,
+Prerequisites: Qt 6.x `gcc_64` (version per `qt-versions.env`), IFW 4.x, `cmake`, `ninja-build`,
 `patchelf` (default locations are auto-detected; overrides below).
 
 ```bash
 sudo apt install ninja-build patchelf libsecret-1-dev
-export QT_DIR=$HOME/Qt/6.11.1/gcc_64
+export QT_DIR=$HOME/Qt/<QT_VERSION>/gcc_64
 
 # 1. Build Release + stage packages/com.googleaiviewer.app/data/
 Installer/Linux/linuxdeploy.sh
@@ -76,11 +76,11 @@ Notes:
 
 ## macOS
 
-Prerequisites: Qt 6.11.x `macos` or `clang_64`, CMake + Ninja, Xcode CLT
+Prerequisites: Qt 6.x `macos` or `clang_64` (version per `qt-versions.env`), CMake + Ninja, Xcode CLT
 (default locations are auto-detected; overrides below).
 
 ```bash
-export QT_DIR=$HOME/Qt/6.11.1/macos
+export QT_DIR=$HOME/Qt/<QT_VERSION>/macos
 
 # 1. Build Release + .app + macdeployqt + stage packages/com.googleaiviewer.app/data/
 Installer/MacOS/macdeploy.sh

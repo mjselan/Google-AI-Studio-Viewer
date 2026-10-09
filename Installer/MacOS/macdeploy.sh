@@ -46,12 +46,20 @@ done
 # --- Resolve Qt ---
 QT_DIR="${QT_DIR_ARG:-${QT_DIR:-}}"
 if [ -z "$QT_DIR" ]; then
-    for cand in "$HOME/Qt/6.10.1/macos" "$HOME/Qt/6.10.1/clang_64" "$HOME/Qt/6.11.1/macos" "$HOME/Qt/6.11.1/clang_64" "/usr/local/opt/qt@6" "/opt/homebrew/opt/qt@6"; do
+    # Qt version pins: qt-versions.env is the single source of truth.
+    _QT_VERSION_ENV="${QT_VERSION:-}"
+    if [ -f "$REPO_ROOT/qt-versions.env" ]; then
+        # shellcheck disable=SC1091
+        . "$REPO_ROOT/qt-versions.env"
+    fi
+    QT_VERSION="${_QT_VERSION_ENV:-${QT_VERSION:-6.11.1}}"
+    unset _QT_VERSION_ENV
+    for cand in "$HOME/Qt/$QT_VERSION/macos" "$HOME/Qt/$QT_VERSION/clang_64" "/usr/local/opt/qt@6" "/opt/homebrew/opt/qt@6"; do
         if [ -x "$cand/bin/qmake" ]; then QT_DIR="$cand"; break; fi
     done
 fi
 if [ -z "$QT_DIR" ] || [ ! -x "$QT_DIR/bin/qmake" ]; then
-    echo "ERROR: Qt not found. Set QT_DIR (e.g. export QT_DIR=\$HOME/Qt/6.11.1/macos)." >&2
+    echo "ERROR: Qt not found. Set QT_DIR (e.g. export QT_DIR=\$HOME/Qt/${QT_VERSION:-6.11.1}/macos)." >&2
     exit 1
 fi
 echo "Qt: $QT_DIR"

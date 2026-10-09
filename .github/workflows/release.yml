@@ -14,6 +14,9 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      - name: Read Qt versions
+        run: grep -E '^[A-Za-z_][A-Za-z0-9_]*=' qt-versions.env >> "$GITHUB_ENV"
+
       - name: Derive version from tag
         run: echo "GOOGLEAIVIEWER_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
 
@@ -23,10 +26,10 @@ jobs:
           sudo apt-get install -y ninja-build patchelf libsecret-1-dev
           libgl1 libfontconfig1 libxcb-cursor0
 
-      - name: Install Qt 6.11
+      - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
-          version: 6.11.1
+          version: ${{ env.QT_VERSION }}
           host: linux
           target: desktop
           arch: linux_gcc_64
@@ -110,15 +113,23 @@ jobs:
         shell: bash
         run: echo "GOOGLEAIVIEWER_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
 
+      - name: Read Qt versions
+        run: |
+          Get-Content qt-versions.env | ForEach-Object {
+            if ($_ -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.+?)\s*$') {
+              "$($Matches[1])=$($Matches[2])" >> $env:GITHUB_ENV
+            }
+          }
+
       - name: Setup MSVC dev environment
         uses: ilammy/msvc-dev-cmd@v1
         with:
           arch: x64
 
-      - name: Install Qt 6.10
+      - name: Install Qt
         uses: jurplel/install-qt-action@v4
         with:
-          version: 6.10.1
+          version: ${{ env.QT_VERSION_WINDOWS_CI }}
           host: windows
           target: desktop
           arch: win64_msvc2022_64
