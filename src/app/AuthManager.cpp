@@ -503,30 +503,62 @@ void AuthManager::onCallbackConnection()
 
 void AuthManager::handleCallbackRequest(QTcpSocket *socket, const QByteArray &requestHead)
 {
-    QString firstLine = QString::fromLatin1(requestHead).split('\n').first();
+    QString firstLine = QString::fromLatin1(requestHead).split('\n').first().trimmed();
     QString target = firstLine.section(' ', 1, 1);
 
-    QUrlQuery query(QUrl(QStringLiteral("http://localhost") + target).query());
-    QString error = query.queryItemValue("error");
-    QString code = query.queryItemValue("code");
-    QString returnedState = query.queryItemValue("state");
+    QUrl url(QStringLiteral("http://127.0.0.1") + target);
 
-    // CSRF state check
-    if (returnedState.isEmpty() || returnedState != m_oauthState)
+    // 1. Ignore browser auxiliary requests (e.g. /favicon.ico, /apple-touch-icon.png)
+    if (url.path() != QLatin1String("/callback"))
     {
-        emit authFailed("OAuth security check failed: CSRF state mismatch.");
+        // Return 404 for non-callback requests and DO NOT trigger auth failure
+        QByteArray notFound = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+        socket->write(notFound);
+        socket->flush();
+        socket->disconnectFromHost();
+        return;
+    }
+
+    // 2. If the callback was already processed and server is closing down, acknowledge and ignore
+    if (m_oauthState.isEmpty())
+    {
         sendHtmlResponse(socket);
         return;
     }
 
+    QUrlQuery query(url.query());
+    QString error = query.queryItemValue("error");
+    QString code = query.queryItemValue("code");
+    QString returnedState = query.queryItemValue("state");
+
+    // 3. Proper CSRF State Validation
+    if (returnedState.isEmpty() || returnedState != m_oauthState)
+    {
+        emit authFailed("OAuth security check failed: CSRF state mismatch.");
+        sendHtmlResponse(socket);
+        stopCallbackServer();
+        return;
+    }
+
+    // State check passed — clear state so it cannot be reused
+    m_oauthState.clear();
+
+    // 4. Handle provider response
     if (!error.isEmpty())
+    {
         emit authFailed("OAuth error from provider: " + error);
+    }
     else if (!code.isEmpty())
+    {
         submitAuthCode(code);
+    }
     else
+    {
         emit authFailed("OAuth callback received no authorization code.");
+    }
 
     sendHtmlResponse(socket);
+    stopCallbackServer(); // Shut down server immediately after handling the real callback
 }
 
 void AuthManager::sendHtmlResponse(QTcpSocket *socket)
