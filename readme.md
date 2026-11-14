@@ -1,5 +1,7 @@
 ﻿# Google AI Studio Viewer
 
+![Markdown Editor](Screenshot.png)
+
 A native, high-performance desktop application (Qt6 / C++20) for browsing, searching, and organizing your [Google AI Studio](https://aistudio.google.com/) conversation history.
 
 Google AI Studio saves prompts and chat sessions as JSON files inside a `Google AI Studio` folder in your Google Drive. However, the web UI lacks fast full-text search across past chats and scrolling through deep histories can be cumbersome. This app connects securely to your Drive via read-only OAuth, syncs your conversations to a local SQLite cache, and provides an instant three-pane native viewer with search, code highlighting, attachment previews, and dark mode support.
